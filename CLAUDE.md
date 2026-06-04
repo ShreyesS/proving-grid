@@ -27,7 +27,7 @@ topology.yaml  ->  twin (networkx state graph)  ->  attacker loop (LLM picks nex
   ->  every state change streams over WebSocket to the React UI (topology + reasoning + score)
 
 ## Repo layout (target — build toward this)
-`proving-grid/
+proving-grid/
 ├── CLAUDE.md
 ├── topology.yaml            # single source of truth
 ├── backend/
@@ -46,7 +46,7 @@ topology.yaml  ->  twin (networkx state graph)  ->  attacker loop (LLM picks nex
     │   ├── ReasoningPanel.jsx
     │   └── Scoreboard.jsx
     └── package.json
-`
+
 
 ## Commands
 # backend
