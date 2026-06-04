@@ -1,0 +1,168 @@
+# Single source of truth for the proving-grid digital twin.
+# Nodes: identity, role, services, modeled vulns (simulation only).
+# Edges: trust / reachability for lateral movement and defender isolation.
+
+mission:
+  goal: exfiltrate customer database
+  critical_nodes:
+    - db_server
+
+nodes:
+  - id: internet
+    type: external
+    services: []
+    modeled_vulns: []
+    defender_monitor: false
+    mission_critical: false
+
+  - id: cdn_edge
+    type: cdn_edge
+    services:
+      - nginx
+      - tls_termination
+      - origin_pull
+    modeled_vulns:
+      - id: EDGE-ORIGIN-SSRF
+        technique: initial_access
+        description: SSRF via misconfigured origin fetch allows pivot to internal origins
+      - id: EDGE-CACHE-POISON
+        technique: initial_access
+        description: Cache key confusion enables serving attacker-controlled responses
+    defender_monitor: true
+    mission_critical: false
+
+  - id: load_balancer
+    type: load_balancer
+    services:
+      - haproxy
+      - health_checks
+    modeled_vulns:
+      - id: LB-ADMIN-EXPOSED
+        technique: initial_access
+        description: Staging admin API reachable from compromised edge tier
+    defender_monitor: true
+    mission_critical: false
+
+  - id: app_server
+    type: app_server
+    services:
+      - api_gateway
+      - auth_service
+    modeled_vulns:
+      - id: APP-IDOR
+        technique: privilege_escalation
+        description: Broken object-level authorization on customer records API
+      - id: APP-DESER
+        technique: privilege_escalation
+        description: Unsafe deserialization in session blob parser
+    defender_monitor: true
+    mission_critical: false
+
+  - id: cache_server
+    type: cache_server
+    services:
+      - redis
+      - session_store
+    modeled_vulns:
+      - id: CACHE-UNAUTH
+        technique: lateral_movement
+        description: Redis instance lacks AUTH from app subnet
+    defender_monitor: true
+    mission_critical: false
+
+  - id: db_server
+    type: db_server
+    services:
+      - postgresql
+      - customer_db
+    modeled_vulns:
+      - id: DB-CRED-REUSE
+        technique: credential_access
+        description: Application service account has SELECT on customer PII tables
+      - id: DB-BACKUP-EXPORT
+        technique: exfiltration
+        description: Nightly backup job can be triggered to attacker-controlled bucket (modeled)
+    defender_monitor: true
+    mission_critical: true
+
+  - id: corp_vpn
+    type: firewall
+    services:
+      - vpn_gateway
+      - split_tunnel
+    modeled_vulns:
+      - id: VPN-MFA-BYPASS
+        technique: initial_access
+        description: Legacy VPN profile without MFA for contractor accounts
+    defender_monitor: true
+    mission_critical: false
+
+  - id: workstation
+    type: workstation
+    services:
+      - email_client
+      - browser
+    modeled_vulns:
+      - id: WS-PHISH
+        technique: initial_access
+        description: Simulated phishing leads to user session token theft
+    defender_monitor: true
+    mission_critical: false
+
+  - id: corp_resources
+    type: corp_resources
+    services:
+      - admin_console
+      - deployment_pipeline
+      - shared_drives
+    modeled_vulns:
+      - id: CORP-CI-TOKEN
+        technique: lateral_movement
+        description: CI deploy token stored in local credential manager (modeled)
+    defender_monitor: true
+    mission_critical: false
+
+edges:
+  - source: internet
+    target: cdn_edge
+    trust: low # CDN accepts but doesn't trust public traffic
+
+  - source: cdn_edge
+    target: load_balancer
+    trust: low
+
+  - source: load_balancer
+    target: app_server
+    trust: medium
+
+  - source: load_balancer
+    target: cache_server
+    trust: medium
+
+  - source: app_server
+    target: db_server
+    trust: high # service account cred reuse — that's the whole vuln
+
+  - source: cache_server
+    target: db_server
+    trust: low
+
+  - source: cdn_edge
+    target: corp_vpn
+    trust: low
+
+  - source: corp_vpn
+    target: workstation
+    trust: medium
+
+  - source: corp_vpn
+    target: corp_resources
+    trust: medium
+
+  - source: workstation
+    target: corp_resources
+    trust: high
+
+  - source: corp_resources
+    target: db_server
+    trust: high # corporate path to crown jewel
