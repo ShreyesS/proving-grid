@@ -39,6 +39,7 @@ class NetworkTwin:
                 compromised=False,
                 isolated=False,
                 exfiltrated=False,
+                privilege="none",  # none -> user -> root
             )
 
         for edge in spec["edges"]:
@@ -49,6 +50,11 @@ class NetworkTwin:
                 requires_cred=edge.get("requires_cred"),
                 active=True,
             )
+
+        # Mission objective: the crown-jewel node(s) the attacker must exfiltrate.
+        self.goal_nodes: set[str] = set(self._mission_critical)
+        # Credentials the attacker has collected (unlock cred-gated edges).
+        self.looted: set[str] = set()
 
     def node_exists(self, node: str) -> bool:
         return node in self.graph
@@ -116,6 +122,40 @@ class NetworkTwin:
             raise KeyError(f"Unknown node: {node}")
         self.graph.nodes[node]["exfiltrated"] = exfiltrated
 
+    # -- privilege ------------------------------------------------------------
+    def set_privilege(self, node: str, level: str) -> None:
+        if not self.node_exists(node):
+            raise KeyError(f"Unknown node: {node}")
+        self.graph.nodes[node]["privilege"] = level
+
+    def get_privilege(self, node: str) -> str:
+        if not self.node_exists(node):
+            raise KeyError(f"Unknown node: {node}")
+        return self.graph.nodes[node].get("privilege", "none")
+
+    # -- loot / credentials ---------------------------------------------------
+    def get_loot(self, node: str) -> list[dict[str, Any]]:
+        if not self.node_exists(node):
+            raise KeyError(f"Unknown node: {node}")
+        return list(self.graph.nodes[node].get("loot") or [])
+
+    def loot_node(self, node: str) -> list[str]:
+        """Collect a compromised node's loot; returns the ids picked up."""
+        picked = [item["id"] for item in self.get_loot(node)]
+        self.looted.update(picked)
+        return picked
+
+    def has_cred(self, cred_id: str | None) -> bool:
+        """True if no credential is required, or the attacker has looted it."""
+        return cred_id is None or cred_id in self.looted
+
+    # -- mission --------------------------------------------------------------
+    def is_goal_reached(self) -> bool:
+        """The mission objective is met once a goal node has been exfiltrated."""
+        return any(
+            self.graph.nodes[n].get("exfiltrated") for n in self.goal_nodes
+        )
+
     def get_mission_integrity(self) -> float:
         """
         Percentage of mission-critical nodes that are uncompromised and not exfiltrated.
@@ -154,6 +194,7 @@ class NetworkTwin:
                     "compromised": data.get("compromised", False),
                     "isolated": data.get("isolated", False),
                     "exfiltrated": data.get("exfiltrated", False),
+                    "privilege": data.get("privilege", "none"),
                 }
             )
         edges = []
@@ -170,6 +211,8 @@ class NetworkTwin:
         return {
             "mission": self._spec.get("mission", {}),
             "mission_integrity": self.get_mission_integrity(),
+            "goal_reached": self.is_goal_reached(),
+            "looted": sorted(self.looted),
             "nodes": nodes,
             "edges": edges,
         }
