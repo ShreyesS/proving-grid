@@ -1,4 +1,4 @@
-# Proving Grid — build context
+# Proving Grid
 
 ## What we're building
 A cyber-range / digital-twin demo (hackathon, judged Fri). A high-fidelity SIMULATION of a
