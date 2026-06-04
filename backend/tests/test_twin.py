@@ -9,12 +9,17 @@ def twin() -> NetworkTwin:
 
 
 def test_loads_topology_nodes_and_edges(twin: NetworkTwin) -> None:
-    assert twin.graph.number_of_nodes() == 9
-    assert twin.graph.number_of_edges() == 11
+    assert twin.graph.number_of_nodes() == 11
+    assert twin.graph.number_of_edges() == 13
 
 
 def test_get_neighbors_bidirectional_over_active_edges(twin: NetworkTwin) -> None:
-    assert twin.get_neighbors("cdn_edge") == ["corp_vpn", "internet", "load_balancer"]
+    assert twin.get_neighbors("cdn_edge") == [
+        "corp_vpn",
+        "internet",
+        "load_balancer",
+        "staging_decoy",
+    ]
     assert twin.get_neighbors("internet") == ["cdn_edge"]
 
 
@@ -50,8 +55,8 @@ def test_mission_integrity(twin: NetworkTwin) -> None:
 def test_to_dict_snapshot(twin: NetworkTwin) -> None:
     snapshot = twin.to_dict()
     assert snapshot["mission_integrity"] == 100.0
-    assert len(snapshot["nodes"]) == 9
-    assert len(snapshot["edges"]) == 11
+    assert len(snapshot["nodes"]) == 11
+    assert len(snapshot["edges"]) == 13
     db = next(n for n in snapshot["nodes"] if n["id"] == "db_server")
     assert db["mission_critical"] is True
 
@@ -59,3 +64,40 @@ def test_to_dict_snapshot(twin: NetworkTwin) -> None:
 def test_unknown_node_raises(twin: NetworkTwin) -> None:
     with pytest.raises(KeyError):
         twin.get_neighbors("missing")
+
+
+# --- depth: zones, criticality, decoys, credential shortcut -----------------
+
+def test_zone_and_criticality_loaded(twin: NetworkTwin) -> None:
+    snap = {n["id"]: n for n in twin.to_dict()["nodes"]}
+    assert snap["db_server"]["zone"] == "corp"
+    assert snap["db_server"]["criticality"] == 100
+    assert snap["load_balancer"]["criticality"] == 85  # costly to isolate
+    assert {n["zone"] for n in snap.values()} == {"external", "edge", "dmz", "corp"}
+
+
+def test_patched_node_is_a_decoy(twin: NetworkTwin) -> None:
+    # staging_decoy advertises an RCE but is patched -> not really exploitable.
+    vulns = twin.get_vulns("staging_decoy")
+    assert vulns and all(v.get("patched") for v in vulns)
+
+
+def test_credential_unlocks_shortcut_edge(twin: NetworkTwin) -> None:
+    loot = twin.graph.nodes["app_server"]["loot"]
+    assert any(l["id"] == "db_service_cred" for l in loot)
+    edge = twin.graph.edges["app_server", "db_server"]
+    assert edge["requires_cred"] == "db_service_cred"
+
+
+def test_multiple_routes_to_goal(twin: NetworkTwin) -> None:
+    # Best path (app), alt (cache), corp path all reach the crown jewel.
+    assert twin.has_route("internet", "db_server")
+    assert twin.has_route("app_server", "db_server")
+    assert twin.has_route("cache_server", "db_server")
+    assert twin.has_route("corp_resources", "db_server")
+
+
+def test_dead_end_has_no_route_to_goal(twin: NetworkTwin) -> None:
+    # dev_laptop is reachable but has no edge onward — a genuine dead-end.
+    assert twin.has_route("workstation", "dev_laptop")
+    assert not twin.has_route("dev_laptop", "db_server")

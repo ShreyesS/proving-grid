@@ -28,8 +28,11 @@ class NetworkTwin:
             self.graph.add_node(
                 node_id,
                 type=node.get("type"),
+                zone=node.get("zone"),
+                criticality=int(node.get("criticality", 0)),
                 services=list(node.get("services") or []),
                 modeled_vulns=list(node.get("modeled_vulns") or []),
+                loot=list(node.get("loot") or []),
                 defender_monitor=bool(node.get("defender_monitor", False)),
                 mission_critical=bool(node.get("mission_critical", False))
                 or node_id in self._mission_critical,
@@ -43,6 +46,7 @@ class NetworkTwin:
                 edge["source"],
                 edge["target"],
                 trust=edge.get("trust", "medium"),
+                requires_cred=edge.get("requires_cred"),
                 active=True,
             )
 
@@ -92,6 +96,21 @@ class NetworkTwin:
             raise KeyError(f"Unknown node: {node}")
         return bool(self.graph.nodes[node]["isolated"])
 
+    def has_route(self, source: str, target: str) -> bool:
+        """Is there a DIRECTED attack path from source to target over active edges?
+
+        Directed (uses edge orientation, unlike the bidirectional get_neighbors used
+        for adjacency/viz) so that a node with only inbound edges is a genuine
+        dead-end — the attacker can reach it but cannot advance from it.
+        """
+        if not self.node_exists(source) or not self.node_exists(target):
+            raise KeyError(f"Unknown node: {source} or {target}")
+        active = self.graph.edge_subgraph(
+            [(u, v) for u, v, d in self.graph.edges(data=True) if d.get("active", True)]
+        )
+        return active.has_node(source) and active.has_node(target) \
+            and nx.has_path(active, source, target)
+
     def set_exfiltrated(self, node: str, exfiltrated: bool = True) -> None:
         if not self.node_exists(node):
             raise KeyError(f"Unknown node: {node}")
@@ -125,8 +144,11 @@ class NetworkTwin:
                 {
                     "id": node_id,
                     "type": data.get("type"),
+                    "zone": data.get("zone"),
+                    "criticality": data.get("criticality", 0),
                     "services": data.get("services", []),
                     "modeled_vulns": data.get("modeled_vulns", []),
+                    "loot": data.get("loot", []),
                     "defender_monitor": data.get("defender_monitor", False),
                     "mission_critical": data.get("mission_critical", False),
                     "compromised": data.get("compromised", False),
@@ -141,6 +163,7 @@ class NetworkTwin:
                     "source": source,
                     "target": target,
                     "trust": data.get("trust", "medium"),
+                    "requires_cred": data.get("requires_cred"),
                     "active": data.get("active", True),
                 }
             )
