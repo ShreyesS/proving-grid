@@ -1,0 +1,241 @@
+# Proving Grid — single source of truth.
+# Drives BOTH the digital twin (backend/twin.py) and the visualization (frontend).
+# SIMULATION ONLY: modeled_vulns describe the twin's modeled state, never real exploits.
+#
+# Zones (left -> right in the kill chain): external -> edge -> dmz -> corp
+# Goal: exfiltrate `corp-db` (the customer database).
+#
+# Path design (one clearly-best path, but choosing is meaningful):
+#   A (best):  internet -> cdn-edge -> web-app -> jump-host -> corp-db
+#              web-app holds `jumphost-cred`, which unlocks the privileged
+#              jump-host -> corp-db edge WITHOUT a separate escalate. Fewest hops,
+#              fewest cross-zone crossings.
+#   B (alt):   internet -> cdn-edge -> api-gateway -> file-server -> corp-db
+#              Viable but longer and crosses into corp earlier -> more detectable.
+#   Dead-end:  web-app -> dev-workstation  (loot, but NO forward edge to the goal)
+#   Decoy:     waf looks exploitable but its vuln is patched -> exploit always fails.
+#   Decoy:     backup-server sits off to the side, no goal-relevant route.
+
+meta:
+  goal_node: corp-db
+  entrypoint: internet
+  zones: [external, edge, dmz, corp]
+
+nodes:
+  # --- external -----------------------------------------------------------
+  - id: internet
+    type: external
+    zone: external
+    label: "Internet (attacker origin)"
+    services: []
+    modeled_vulns: []
+    criticality: 0
+    entrypoint: true
+    monitored: false
+
+  # --- edge (internet-facing CDN segment) ---------------------------------
+  - id: cdn-edge
+    type: cdn
+    zone: edge
+    label: "CDN Edge Node"
+    services: [http, https, cdn-cache]
+    provides: "Public CDN / content delivery"
+    criticality: 70
+    monitored: true
+    modeled_vulns:
+      # Initial access: unauthenticated RCE in the edge cache handler.
+      - id: CVE-2025-CDN-RCE
+        technique: initial-access
+        cvss: 9.1
+        exploitable: true
+        patched: false
+        requires: none
+
+  - id: waf
+    type: waf
+    zone: edge
+    label: "Web App Firewall"
+    services: [https]
+    provides: "Edge filtering / WAF"
+    criticality: 60
+    monitored: true
+    modeled_vulns:
+      # LOOKS exploitable but isn't: signature exists, but the host is patched.
+      - id: CVE-2024-WAF-BYPASS
+        technique: initial-access
+        cvss: 8.2
+        exploitable: true
+        patched: true          # <- exploit() will fail here
+        requires: none
+
+  - id: lb
+    type: lb
+    zone: edge
+    label: "Load Balancer"
+    services: [http, https]
+    provides: "Customer-facing traffic routing"
+    criticality: 85           # isolating this hurts mission_integrity a lot
+    monitored: false
+    modeled_vulns: []
+
+  # --- dmz (application tier) ---------------------------------------------
+  - id: web-app
+    type: webserver
+    zone: dmz
+    label: "Web App Server"
+    services: [http, app-runtime]
+    provides: "Customer web application"
+    criticality: 80           # customer-facing: costly to isolate
+    monitored: true
+    modeled_vulns:
+      - id: CVE-2025-WEBAPP-DESER
+        technique: lateral-movement
+        cvss: 8.8
+        exploitable: true
+        patched: false
+        requires: foothold     # reachable from a compromised neighbor
+    loot:
+      # The shortcut credential: unlocks jump-host -> corp-db.
+      - id: jumphost-cred
+        type: credential
+        label: "Cached jump-host service credential"
+        unlocks_edge: [jump-host, corp-db]
+
+  - id: api-gateway
+    type: api
+    zone: dmz
+    label: "API Gateway"
+    services: [https, grpc]
+    provides: "Partner/API traffic"
+    criticality: 65
+    monitored: true
+    modeled_vulns:
+      - id: CVE-2025-APIGW-SSRF
+        technique: lateral-movement
+        cvss: 7.4
+        exploitable: true
+        patched: false
+        requires: foothold
+
+  - id: jump-host
+    type: bastion
+    zone: dmz
+    label: "Jump Host / Bastion"
+    services: [ssh]
+    provides: "Admin access to corp tier"
+    criticality: 75
+    monitored: true
+    modeled_vulns:
+      # Without the looted credential, reaching corp-db needs root here.
+      - id: CVE-2025-BASTION-PRIV
+        technique: privilege-escalation
+        cvss: 7.0
+        exploitable: true
+        patched: false
+        requires: foothold
+
+  # --- corp (crown jewels) ------------------------------------------------
+  - id: dev-workstation
+    type: workstation
+    zone: corp
+    label: "Dev Workstation"
+    services: [ssh, rdp]
+    provides: "Developer endpoint"
+    criticality: 30
+    monitored: false
+    modeled_vulns:
+      - id: CVE-2025-WKSTN-RCE
+        technique: lateral-movement
+        cvss: 7.8
+        exploitable: true
+        patched: false
+        requires: foothold
+    loot:
+      # Tempting but useless: no edge from here advances toward corp-db.
+      - id: source-code
+        type: data
+        label: "Internal source code (not the goal)"
+
+  - id: file-server
+    type: fileserver
+    zone: corp
+    label: "File Server"
+    services: [smb, nfs]
+    provides: "Corp file shares"
+    criticality: 55
+    monitored: true
+    modeled_vulns:
+      - id: CVE-2025-FS-SMB
+        technique: lateral-movement
+        cvss: 8.1
+        exploitable: true
+        patched: false
+        requires: foothold
+
+  - id: backup-server
+    type: backup
+    zone: corp
+    label: "Backup Server"
+    services: [https, backup-agent]
+    provides: "Backup/restore"
+    criticality: 50
+    monitored: false
+    modeled_vulns: []          # decoy: nothing to exploit, no route to goal
+
+  - id: corp-db
+    type: database
+    zone: corp
+    label: "Customer DB (GOAL)"
+    services: [postgres]
+    provides: "Customer database"
+    criticality: 100
+    is_goal: true
+    monitored: true
+    modeled_vulns:
+      - id: CVE-2025-DB-AUTH
+        technique: exfiltration
+        cvss: 9.4
+        exploitable: true
+        patched: false
+        requires: privilege    # needs root on the adjacent node OR jumphost-cred
+    loot:
+      - id: customer-db
+        type: data
+        label: "Customer database dump (mission objective)"
+
+edges:
+  # internet reaches the edge segment over the network.
+  - { source: internet, target: cdn-edge, type: network }
+  - { source: internet, target: waf,      type: network }
+
+  # edge -> dmz (cross-zone). lb fronts the app tier.
+  - { source: cdn-edge, target: lb,          type: network }
+  - { source: cdn-edge, target: web-app,     type: trust }   # Path A
+  - { source: cdn-edge, target: api-gateway, type: network } # Path B
+  - { source: lb,       target: web-app,     type: network }
+  - { source: lb,       target: api-gateway, type: network }
+
+  # dmz internal
+  - { source: web-app,     target: jump-host,       type: trust }   # Path A
+  - { source: web-app,     target: dev-workstation, type: trust }   # dead-end
+  - { source: api-gateway, target: file-server,     type: network } # Path B (cross-zone)
+
+  # into corp (cross-zone)
+  - { source: jump-host,   target: corp-db,      type: trust, requires_cred: jumphost-cred } # shortcut
+  - { source: jump-host,   target: backup-server, type: network }                            # decoy
+  - { source: file-server, target: corp-db,      type: network }                             # Path B
+
+# Defender sensor coverage. The defender correlates events seen on monitored
+# nodes / cross-zone boundaries into a single intrusion verdict (see defender.py).
+monitoring:
+  sensors:
+    - { node: cdn-edge,    watches: [exploit, scan] }
+    - { node: web-app,     watches: [exploit, lateral_move] }
+    - { node: api-gateway, watches: [exploit, lateral_move] }
+    - { node: jump-host,   watches: [lateral_move, escalate] }
+    - { node: file-server, watches: [lateral_move] }
+    - { node: corp-db,     watches: [lateral_move, exfiltrate] }
+  # Boundaries the defender weights most heavily: crossing into a new zone.
+  cross_zone_boundaries:
+    - [edge, dmz]
+    - [dmz, corp]

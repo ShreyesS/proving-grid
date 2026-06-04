@@ -1,0 +1,57 @@
+:root {
+  --bg: #0b0f1a;
+  --panel: #131a2b;
+  --border: #243049;
+  --text: #e6ecff;
+  --muted: #8aa0c8;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app__header {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.app__header h1 { font-size: 18px; margin: 0; letter-spacing: 0.5px; }
+.app__header .sub { color: var(--muted); font-size: 13px; }
+
+.app__body { flex: 1; min-height: 0; display: flex; }
+
+.topology { flex: 1; min-width: 0; position: relative; }
+.topology__canvas { position: absolute; inset: 0; }
+
+.legend {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  background: rgba(19, 26, 43, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  z-index: 5;
+}
+.legend h4 { margin: 0 0 6px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
+.legend__row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+.legend__swatch { width: 12px; height: 12px; border-radius: 3px; }
+
+.status { padding: 20px; color: var(--muted); }
