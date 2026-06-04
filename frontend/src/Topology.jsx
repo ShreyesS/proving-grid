@@ -153,7 +153,7 @@ export default function Topology({ snapshot }) {
 
     cy.on("mouseover", "edge", (evt) => {
       const edge = evt.target.data();
-      const pos = evt.target.midpoint();
+      const pos = { x: evt.originalEvent.offsetX, y: evt.originalEvent.offsetY };
       setTooltip({
         x: pos.x,
         y: pos.y,
