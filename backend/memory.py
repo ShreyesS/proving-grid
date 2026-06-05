@@ -57,19 +57,26 @@ class RunMemory:
             "integrity": defense.get("integrity_retained"),
         })
 
+    @staticmethod
+    def _is_path(r: dict[str, Any]) -> bool:
+        """A run counts as a discovered attack path only if it actually reached
+        the crown jewel or was a real attempt the defender contained — a run that
+        got blocked with no progress isn't a 'path'."""
+        return bool(r["reached_goal"] or r["outcome"] == "contained")
+
     # -- the agent's view: what it already knows (feeds the next run) ---------
     def path_summaries(self) -> list[str]:
         """Distinct discovered chains, newest-distinct first — for the prompt."""
         seen, out = set(), []
         for r in self.runs:
+            if not self._is_path(r):
+                continue
             sig = r["signature"]
             if sig and sig not in seen:
                 seen.add(sig)
-                tag = ""
-                if r["evaded_defense"]:
-                    tag = "  [evaded the defender]"
-                elif r["outcome"] == "contained":
-                    tag = "  [was detected + contained]"
+                tag = ("  [evaded the defender]" if r["evaded_defense"]
+                       else "  [was detected + contained]" if r["outcome"] == "contained"
+                       else "")
                 out.append(sig + tag)
         return out
 
@@ -77,6 +84,8 @@ class RunMemory:
     def distinct_paths(self) -> list[dict[str, Any]]:
         seen, out = set(), []
         for r in self.runs:
+            if not self._is_path(r):
+                continue
             if r["signature"] and r["signature"] not in seen:
                 seen.add(r["signature"])
                 out.append(r)
@@ -91,6 +100,7 @@ class RunMemory:
         detect_steps = [r["detected_at_step"] for r in self.runs
                         if r["detected_at_step"] is not None]
         defended_runs = [r for r in self.runs if r["defended"]]
+        last = self.runs[-1] if self.runs else None
         return {
             "total_runs": total,
             "distinct_paths": len(distinct),
@@ -100,11 +110,20 @@ class RunMemory:
             "defended_runs": len(defended_runs),
             "median_detection_step": (round(median(detect_steps), 1)
                                       if detect_steps else None),
+            "last_run": ({
+                "chain": last["signature"],
+                "exposures": last["exposures"],
+                "outcome": last["outcome"],
+                "evaded_defense": last["evaded_defense"],
+                "reached_goal": last["reached_goal"],
+                "defended": last["defended"],
+            } if last else None),
             "paths": [
                 {
                     "chain": r["signature"],
                     "exposures": r["exposures"],
                     "outcome": r["outcome"],
+                    "reached_goal": r["reached_goal"],
                     "evaded_defense": r["evaded_defense"],
                     "detected_at_step": r["detected_at_step"],
                 }

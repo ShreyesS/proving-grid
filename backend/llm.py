@@ -47,8 +47,10 @@ observe, which SPECIFIC weakness you're taking advantage of and why it works \
 (name the CVE / credential / trust relationship), then call EXACTLY ONE tool. \
 You only advance by acting.
 - Tradecraft: scan to confirm what's reachable; exploit an exposed vuln to gain \
-a foothold; lateral_move along trust/network edges; loot a node to collect \
-credentials (some edges are credential-gated — loot the credential first); \
+a foothold; lateral_move rides a trust relationship — each frontier node's \
+`traversal` says whether `lateral_move` works (trust/credential) or you must \
+`exploit` it (a low-trust, network-only edge needs a vuln); loot a node to \
+collect credentials (some edges are credential-gated — loot the credential first); \
 escalate when you need higher privilege; exfiltrate once you're on the goal.
 - ACCESS LEVELS MATTER: a foothold starts at `user` privilege. Crossing into the \
 protected zone (where the database lives) requires `root` on your current node, \

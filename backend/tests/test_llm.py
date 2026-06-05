@@ -37,9 +37,9 @@ def _tool_turn(thought, name, args, tid):
 PATH_A_SCRIPT = [
     _tool_turn("Recon the edge.", "scan", {"from_node": "internet"}, "t1"),
     _tool_turn("Initial access.", "exploit", {"target": "cdn_edge"}, "t2"),
-    _tool_turn("Pivot in.", "lateral_move", {"from_node": "cdn_edge", "target": "load_balancer"}, "t3"),
-    _tool_turn("Through the firewall.", "lateral_move", {"from_node": "load_balancer", "target": "firewall"}, "t4"),
-    _tool_turn("To the app tier.", "lateral_move", {"from_node": "firewall", "target": "app_server"}, "t5"),
+    _tool_turn("Exploit the LB.", "exploit", {"target": "load_balancer"}, "t3"),
+    _tool_turn("Exploit the firewall.", "exploit", {"target": "firewall"}, "t4"),
+    _tool_turn("Trust into the app tier.", "lateral_move", {"from_node": "firewall", "target": "app_server"}, "t5"),
     _tool_turn("Grab the cred.", "loot", {"node": "app_server"}, "t6"),
     _tool_turn("Escalate to cross.", "escalate", {"node": "app_server"}, "t7"),
     _tool_turn("Shortcut to DB.", "lateral_move", {"from_node": "app_server", "target": "db_server"}, "t8"),

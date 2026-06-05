@@ -19,7 +19,9 @@ function PathRow({ p }) {
     ? { text: "EVADED", color: "#ef4444" }
     : p.outcome === "contained"
     ? { text: "CONTAINED", color: "#38bdf8" }
-    : { text: "BREACHED", color: "#f59e0b" };
+    : p.reached_goal
+    ? { text: "BREACHED", color: "#f59e0b" }
+    : { text: "BLOCKED", color: "#64748b" };
   return (
     <div style={{ padding: "6px 0", borderBottom: "1px solid #222c3c" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>

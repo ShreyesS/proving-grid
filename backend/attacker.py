@@ -91,6 +91,10 @@ def perceive(twin: NetworkTwin, last_result: Optional[ToolResult] = None) -> dic
                 "cvss": prof["cvss"],
                 "epss": prof["epss"],
                 "accessibility": accessibility,   # dynamic: easy/moderate/hard or gated
+                # How you take this node: low-trust edge => you must `exploit` it
+                # (needs a vuln); medium/high trust or a cred => `lateral_move` works.
+                "traversal": ("exploit-required" if edata.get("trust") == "low" and not cred
+                              else "lateral-or-exploit"),
                 "monitored": monitored,
                 "detection_risk": detection_risk,
                 "requires_cred": cred,
@@ -309,12 +313,12 @@ def scripted_path_a() -> Decide:
          "thought": "Recon from my internet foothold to map the edge."},
         {"tool": "exploit", "args": {"target": "cdn_edge"},
          "thought": "CDN edge exposes an unauth SSRF — initial access."},
-        {"tool": "lateral_move", "args": {"from_node": "cdn_edge", "target": "load_balancer"},
-         "thought": "Pivot inward through the load balancer."},
-        {"tool": "lateral_move", "args": {"from_node": "load_balancer", "target": "firewall"},
-         "thought": "Slip through the firewall on its over-permissive DMZ rule."},
+        {"tool": "exploit", "args": {"target": "load_balancer"},
+         "thought": "Low-trust edge — exploit the load balancer's exposed admin API."},
+        {"tool": "exploit", "args": {"target": "firewall"},
+         "thought": "Exploit the firewall's over-permissive DMZ policy drift."},
         {"tool": "lateral_move", "args": {"from_node": "firewall", "target": "app_server"},
-         "thought": "Move to the app server in the DMZ."},
+         "thought": "Firewall trusts the app server — pivot in on that trust."},
         {"tool": "loot", "args": {"node": "app_server"},
          "thought": "Harvest the cached service-account credential."},
         {"tool": "escalate", "args": {"node": "app_server"},

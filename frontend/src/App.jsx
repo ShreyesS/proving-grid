@@ -3,6 +3,7 @@ import Topology from "./Topology.jsx";
 import Scoreboard from "./Scoreboard.jsx";
 import ReasoningPanel from "./ReasoningPanel.jsx";
 import CoveragePanel from "./CoveragePanel.jsx";
+import PatchHud from "./PatchHud.jsx";
 
 function wsUrl() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -56,9 +57,36 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState(null); // null | "saving" | "saved" | "error"
   const [coverage, setCoverage] = useState(null);
   const [evalProgress, setEvalProgress] = useState(null);
+  const [hardened, setHardened] = useState([]);
+  const [patchedWhere, setPatchedWhere] = useState({});
 
   function refreshCoverage() {
     fetch("/memory").then((r) => r.json()).then(setCoverage).catch(() => {});
+  }
+
+  function refreshHardened() {
+    fetch("/patch")
+      .then((r) => r.json())
+      .then((d) => { setHardened(d.patched || []); setPatchedWhere(d.where || {}); })
+      .catch(() => {});
+  }
+
+  // Patch specific CVEs (the ones the last attack exploited), then repaint.
+  function patchVulns(vulns) {
+    const qs = (vulns || []).map((v) => `vulns=${encodeURIComponent(v)}`).join("&");
+    fetch(`/patch?${qs}`, { method: "POST" })
+      .then((r) => r.json())
+      .then((d) => { setHardened(d.patched || []); setPatchedWhere(d.where || {}); })
+      .then(reloadTopology)
+      .catch((err) => console.error("Patch failed:", err));
+  }
+
+  function restorePatches() {
+    fetch("/patch/reset", { method: "POST" })
+      .then((r) => r.json())
+      .then((d) => { setHardened(d.patched || []); setPatchedWhere(d.where || {}); })
+      .then(reloadTopology)
+      .catch(() => {});
   }
 
   function triggerRun(defended) {
@@ -163,6 +191,7 @@ export default function App() {
         );
       });
     refreshCoverage();
+    refreshHardened();
   }, []);
 
   useEffect(() => {
@@ -269,7 +298,16 @@ export default function App() {
           </span>
         </div>
       </header>
-      <main className="app-main">
+      <main className="app-main" style={{ position: "relative" }}>
+        {!loadError && snapshot && (
+          <PatchHud
+            lastRun={coverage?.last_run}
+            hardened={hardened}
+            patchedWhere={patchedWhere}
+            onPatch={patchVulns}
+            onRestore={restorePatches}
+          />
+        )}
         {loadError ? (
           <div
             style={{
