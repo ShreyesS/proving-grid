@@ -21,7 +21,8 @@ function upsertDelta(prev, step, chunk) {
 
 // Finalize a step (after its tool ran) with technique / exposure / result.
 function upsertFinal(prev, p) {
-  if (p.kind === "finding" || p.kind === "error") {
+  // Standalone events (not tied to an attacker step) just append.
+  if (["finding", "error", "detection", "defense"].includes(p.kind)) {
     return [...prev, { ...p, streaming: false }];
   }
   const i = prev.findIndex((s) => s.step === p.step && s.kind === "step");

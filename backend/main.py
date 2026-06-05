@@ -81,10 +81,11 @@ def get_state() -> dict:
 
 
 @app.post("/run")
-async def run(brain: str = "auto"):
+async def run(brain: str = "auto", defended: bool = False):
     """Trigger a bounded attack rehearsal; events stream to all /ws clients.
 
     brain: 'auto' (LLM if ANTHROPIC_API_KEY is set, else scripted) | 'llm' | 'scripted'.
+    defended: if true, a defender detects + contains the attacker (the A/B duel).
     """
     global _run_in_progress
     if _run_in_progress:
@@ -99,8 +100,8 @@ async def run(brain: str = "auto"):
         async def emit(message: dict) -> None:
             await manager.broadcast(message)
 
-        outcome = await run_attack(twin, decide, emit)
-        return {"outcome": outcome, "brain": brain}
+        outcome = await run_attack(twin, decide, emit, defended=defended)
+        return {"outcome": outcome, "brain": brain, "defended": defended}
     finally:
         _run_in_progress = False
 

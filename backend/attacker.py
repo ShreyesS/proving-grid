@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Awaitable, Callable, Optional
 
+from defender import Defender
 from tools import TOOLS, ToolResult
 from twin import NetworkTwin
 
@@ -145,14 +146,21 @@ async def run_attack(
     start_node: str = "internet",
     max_steps: int = 20,
     step_delay: float = 0.6,
+    defended: bool = False,
 ) -> str:
-    """Run the bounded attack, streaming reasoning + state. Returns the outcome."""
+    """Run the bounded attack, streaming reasoning + state. Returns the outcome.
+
+    If `defended`, a defender observes each action, correlates the kill chain,
+    and contains the attacker — the live blue-vs-red duel.
+    """
     # Signal a fresh run so the UI can reset its reasoning panel.
-    await emit({"type": "run_start", "payload": {}})
+    await emit({"type": "run_start", "payload": {"defended": defended}})
     # The attacker controls their own origin to begin with.
     twin.set_compromised(start_node, True)
     twin.set_privilege(start_node, "root")
     await emit({"type": "state", "payload": twin.to_dict()})
+
+    defender = Defender(twin, start_node) if defended else None
 
     outcome = "blocked"
     step = 0
@@ -213,14 +221,43 @@ async def run_attack(
         await emit({"type": "state", "payload": twin.to_dict()})
 
         if twin.is_goal_reached():
-            outcome = "goal"
+            outcome = "breached" if defended else "goal"
             break
+
+        # The defender observes this action — correlate the kill chain, contain.
+        if defender is not None:
+            detection, defense = defender.observe(result, step)
+            if detection:
+                await emit({"type": "reasoning", "payload": {
+                    "step": step, "kind": "detection", "ok": True,
+                    "confidence": detection["confidence"],
+                    "text": f"🚨 INTRUSION DETECTED — {detection['confidence']}% confidence. "
+                            f"Correlated kill-chain: "
+                            f"{' · '.join(detection['correlated_events'][-3:])}",
+                }})
+            if defense:
+                impact = "" if defense["service_maintained"] else "  ⚠ SERVICE IMPACT"
+                await emit({"type": "reasoning", "payload": {
+                    "step": step, "kind": "defense", "ok": True,
+                    "text": f"🛡 CONTAINED: isolated {defense['isolated']} "
+                            f"(criticality {defense['criticality']}) — mission integrity "
+                            f"{defense['integrity']}%{impact}",
+                }})
+                await emit({"type": "state", "payload": twin.to_dict()})
+
         await asyncio.sleep(step_delay)
     else:
         outcome = "step_cap"
 
+    # Detected + attacker never reached the goal = contained (the duel was won).
+    if defended and defender and defender.alerted and not twin.is_goal_reached():
+        outcome = "contained"
+
     findings = _build_findings(twin, outcome, step, path)
-    # Surface the discovered path in the existing reasoning panel (UI needs no change).
+    findings["defended"] = defended
+    if defender is not None:
+        findings["defense"] = defender.summary()
+    # Surface the outcome in the existing reasoning panel (UI needs no change).
     if findings["reached_goal"]:
         chain = " → ".join(
             f"{p['target']}[{p['exposure']}]" if p.get("exposure") else p["target"]
@@ -232,6 +269,17 @@ async def run_attack(
             "text": f"[FINDING] Attack path to crown jewel: {chain}",
             "exposures_chained": findings["exposures_chained"],
             "tool": None, "ok": True,
+        }})
+    elif outcome == "contained":
+        d = findings.get("defense", {})
+        await emit({"type": "reasoning", "payload": {
+            "step": step + 1,
+            "kind": "defense",
+            "text": f"✓ CONTAINED — attacker blocked, customer DB never exfiltrated. "
+                    f"Detected at step {d.get('detected_at_step')}, isolated "
+                    f"{', '.join(d.get('isolated_nodes') or []) or 'nodes'}; "
+                    f"mission integrity retained {d.get('integrity_retained')}%.",
+            "ok": True,
         }})
     await emit({"type": "run_end", "payload": {**findings, "findings": findings}})
     return outcome

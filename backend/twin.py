@@ -194,24 +194,34 @@ class NetworkTwin:
         )
 
     def get_mission_integrity(self) -> float:
-        """
-        Percentage of mission-critical nodes that are uncompromised and not exfiltrated.
-        Returns 100.0 when there are no critical nodes.
+        """Mission integrity = crown-jewel safety MINUS the cost of containment.
+
+        Base: % of mission-critical nodes still uncompromised/unexfiltrated.
+        Cost: isolating a node to contain the attacker takes its service down —
+        a high-criticality node costs more. So "we contained the breach" is never
+        free; integrity reflects the availability we sacrificed to defend.
         """
         critical = [
             n
             for n, data in self.graph.nodes(data=True)
             if data.get("mission_critical") or n in self._mission_critical
         ]
-        if not critical:
-            return 100.0
+        base = 100.0
+        if critical:
+            safe = sum(
+                1 for n in critical
+                if not self.graph.nodes[n].get("compromised")
+                and not self.graph.nodes[n].get("exfiltrated")
+            )
+            base = 100.0 * safe / len(critical)
 
-        safe = 0
-        for node in critical:
-            data = self.graph.nodes[node]
-            if not data.get("compromised") and not data.get("exfiltrated"):
-                safe += 1
-        return round(100.0 * safe / len(critical), 2)
+        # Containment cost: ~0.15 point per criticality point of each isolated node.
+        cost = 0.15 * sum(
+            data.get("criticality", 0)
+            for _, data in self.graph.nodes(data=True)
+            if data.get("isolated")
+        )
+        return max(0.0, round(base - cost, 2))
 
     def to_dict(self) -> dict[str, Any]:
         """Snapshot for API / viz: nodes, edges, and mission integrity."""
