@@ -6,9 +6,17 @@ const TECHNIQUE_STYLE = {
   "initial-access": { label: "INITIAL ACCESS", color: "#3b82f6" },
   "lateral-movement": { label: "LATERAL MOVEMENT", color: "#a855f7" },
   "privilege-escalation": { label: "PRIV ESC", color: "#f59e0b" },
+  "credential-access": { label: "CREDENTIAL ACCESS", color: "#eab308" },
+  "defense-evasion": { label: "DEFENSE EVASION", color: "#8b5cf6" },
   collection: { label: "COLLECTION", color: "#14b8a6" },
   exfiltration: { label: "EXFILTRATION", color: "#ef4444" },
 };
+
+// Techniques come from the topology (underscores) or the tools (hyphens) —
+// normalize so the tag renders either way.
+function techStyle(technique) {
+  return TECHNIQUE_STYLE[(technique || "").replace(/_/g, "-")];
+}
 
 function Tag({ text, color, title }) {
   return (
@@ -63,7 +71,7 @@ function Step({ s }) {
     );
   }
 
-  const tech = TECHNIQUE_STYLE[s.technique];
+  const tech = techStyle(s.technique);
   return (
     <div
       style={{
