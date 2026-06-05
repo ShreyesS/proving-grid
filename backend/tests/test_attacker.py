@@ -35,7 +35,9 @@ def test_run_streams_state_and_reasoning_and_end():
     # Every reasoning line carries human-readable text for the UI panel.
     reasoning = [e for e in events if e["type"] == "reasoning"]
     assert all(r["payload"]["text"] for r in reasoning)
-    assert reasoning[-1]["payload"]["technique"] == "exfiltration"
+    # The action steps include the exfiltration; a [FINDING] summary trails them.
+    assert any(r["payload"].get("technique") == "exfiltration" for r in reasoning)
+    assert "[FINDING]" in reasoning[-1]["payload"]["text"]
 
 
 def test_run_is_bounded_by_max_steps():

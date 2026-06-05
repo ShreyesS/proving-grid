@@ -19,7 +19,7 @@ ToolResult = dict[str, Any]
 
 def _result(tool: str, ok: bool, *, target: str | None = None,
             technique: str = "", observation: str = "",
-            error: str | None = None) -> ToolResult:
+            error: str | None = None, exposure: str | None = None) -> ToolResult:
     return {
         "tool": tool,
         "ok": ok,
@@ -27,6 +27,7 @@ def _result(tool: str, ok: bool, *, target: str | None = None,
         "technique": technique,
         "observation": observation,
         "error": error,
+        "exposure": exposure,  # the specific CVE / credential / trust edge abused
     }
 
 
@@ -87,6 +88,7 @@ def exploit(twin: NetworkTwin, target: str) -> ToolResult:
     twin.set_privilege(target, "user")
     return _result("exploit", True, target=target,
                    technique=fired.get("technique", "initial-access"),
+                   exposure=fired["id"],
                    observation=f"Exploited {fired['id']} on {target} — foothold gained")
 
 
@@ -113,6 +115,7 @@ def lateral_move(twin: NetworkTwin, from_node: str, target: str) -> ToolResult:
         twin.set_privilege(target, "user")
     via = f" using {cred}" if cred else ""
     return _result("lateral_move", True, target=target, technique="lateral-movement",
+                   exposure=cred or f"trust:{from_node}->{target}",
                    observation=f"Pivoted {from_node} -> {target}{via}")
 
 
@@ -136,6 +139,7 @@ def loot(twin: NetworkTwin, node: str) -> ToolResult:
         return _result("loot", True, target=node, technique="collection",
                        observation=f"Nothing of value on {node}")
     return _result("loot", True, target=node, technique="collection",
+                   exposure=", ".join(picked),
                    observation=f"Collected from {node}: {', '.join(picked)}")
 
 
@@ -150,6 +154,7 @@ def exfiltrate(twin: NetworkTwin, node: str) -> ToolResult:
     twin.set_exfiltrated(node, True)
     data = ", ".join(i["id"] for i in twin.get_loot(node)) or "objective data"
     return _result("exfiltrate", True, target=node, technique="exfiltration",
+                   exposure=data,
                    observation=f"Exfiltrated {data} from {node} — MISSION OBJECTIVE MET")
 
 
