@@ -1,19 +1,17 @@
 """M2: the LLM brain plumbing — verified with a network-free fake client.
 
-No real API calls. We inject a fake Anthropic client that returns canned
-tool_use responses, so we can test message threading, action extraction, the
-findings artifact, and graceful failure without a key or network.
+No real API calls. We inject a fake async Anthropic client that streams canned
+tool_use responses, so we can test token streaming, message threading, action
+extraction, the findings artifact, and graceful failure without a key or network.
 """
 import asyncio
-
-import pytest
 
 from attacker import run_attack
 from llm import LLMBrain, has_api_key, make_brain
 from twin import load_twin
 
 
-# --- fake Anthropic client ------------------------------------------------
+# --- fake async Anthropic client ------------------------------------------
 
 class FakeBlock:
     def __init__(self, type, text=None, name=None, input=None, id=None):
@@ -36,7 +34,6 @@ def _tool_turn(thought, name, args, tid):
     ])
 
 
-# Canned Path A: scan -> exploit -> lateral x2 -> loot -> lateral(cred) -> exfil.
 PATH_A_SCRIPT = [
     _tool_turn("Recon the edge.", "scan", {"from_node": "internet"}, "t1"),
     _tool_turn("Initial access.", "exploit", {"target": "cdn_edge"}, "t2"),
@@ -48,22 +45,46 @@ PATH_A_SCRIPT = [
 ]
 
 
-class FakeMessages:
+class FakeStream:
+    """Mimics the async streaming context manager: text_stream + get_final_message."""
+    def __init__(self, response):
+        self.response = response
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    @property
+    def text_stream(self):
+        async def gen():
+            for b in self.response.content:
+                if b.type == "text":
+                    for word in b.text.split():
+                        yield word + " "
+        return gen()
+
+    async def get_final_message(self):
+        return self.response
+
+
+class FakeAsyncMessages:
     def __init__(self, script):
         self.script = script
         self.i = 0
-        self.seen_last = []  # the last message present on each create() call
+        self.seen_last = []  # the last message present on each stream() call
 
-    def create(self, **kwargs):
+    def stream(self, **kwargs):
         self.seen_last.append(kwargs["messages"][-1])
         resp = self.script[self.i]
         self.i += 1
-        return resp
+        return FakeStream(resp)
 
 
-class FakeClient:
+class FakeAsyncClient:
     def __init__(self, script):
-        self.messages = FakeMessages(script)
+        self.messages = FakeAsyncMessages(script)
 
 
 def _run(decide):
@@ -80,34 +101,39 @@ def _run(decide):
 # --- tests ----------------------------------------------------------------
 
 def test_llm_brain_reaches_goal_via_tool_use():
-    brain = LLMBrain(client=FakeClient(PATH_A_SCRIPT))
+    brain = LLMBrain(client=FakeAsyncClient(PATH_A_SCRIPT))
     outcome, events, twin = _run(brain.decide)
     assert outcome == "goal"
     assert twin.is_goal_reached()
 
 
+def test_reasoning_tokens_are_streamed():
+    _outcome, events, _twin = _run(LLMBrain(client=FakeAsyncClient(PATH_A_SCRIPT)).decide)
+    deltas = [e for e in events if e["type"] == "reasoning_delta"]
+    assert deltas, "expected streamed reasoning tokens"
+    # Tokens carry the step they belong to and a text chunk.
+    assert deltas[0]["payload"]["step"] == 1
+    assert deltas[0]["payload"]["chunk"]
+
+
 def test_llm_brain_threads_tool_results_with_ids():
-    client = FakeClient(PATH_A_SCRIPT)
+    client = FakeAsyncClient(PATH_A_SCRIPT)
     _run(LLMBrain(client=client).decide)
     seen = client.messages.seen_last
-    # First turn: a plain user perception string (no prior tool to report).
-    assert isinstance(seen[0]["content"], str)
-    # Second turn: a tool_result referencing the first tool_use id.
+    assert isinstance(seen[0]["content"], str)               # first turn: perception string
     block = seen[1]["content"][0]
     assert block["type"] == "tool_result"
-    assert block["tool_use_id"] == "t1"
+    assert block["tool_use_id"] == "t1"                      # threaded back correctly
 
 
 def test_findings_artifact_emitted_at_run_end():
-    _outcome, events, _twin = _run(LLMBrain(client=FakeClient(PATH_A_SCRIPT)).decide)
+    _outcome, events, _twin = _run(LLMBrain(client=FakeAsyncClient(PATH_A_SCRIPT)).decide)
     end = events[-1]
     assert end["type"] == "run_end"
     f = end["payload"]
     assert f["reached_goal"] is True
-    # The chained exposures include the entry CVE, the looted cred, and the data.
     assert "EDGE-ORIGIN-SSRF" in f["exposures_chained"]
     assert "db_service_cred" in f["exposures_chained"]
-    # The path is the ordered chain ending at the crown jewel.
     assert f["path"][-1]["target"] == "db_server"
     assert f["path"][-1]["technique"] == "exfiltration"
 
@@ -116,7 +142,7 @@ def test_brain_error_does_not_crash_run():
     class BoomClient:
         class messages:
             @staticmethod
-            def create(**kwargs):
+            def stream(**kwargs):
                 raise RuntimeError("api exploded")
 
     outcome, events, _twin = _run(LLMBrain(client=BoomClient()).decide)
@@ -129,6 +155,5 @@ def test_make_brain_falls_back_to_scripted_without_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert has_api_key() is False
     decide = make_brain("auto")
-    # Scripted brain's first action is a scan from the internet foothold.
-    action = decide({}, load_twin())
+    action = asyncio.run(decide({}, load_twin(), None))
     assert action["tool"] == "scan" and action["args"]["from_node"] == "internet"

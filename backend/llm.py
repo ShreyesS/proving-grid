@@ -42,7 +42,10 @@ How to operate:
 reach next, with their services, modeled vulnerabilities, and whether an edge \
 needs a credential), the credentials you've looted, and the result of your last \
 action.
-- Reason briefly, then call EXACTLY ONE tool. You only advance by acting.
+- Think out loud like a skilled operator: in 2-4 vivid sentences say what you \
+observe, which SPECIFIC weakness you're taking advantage of and why it works \
+(name the CVE / credential / trust relationship), then call EXACTLY ONE tool. \
+You only advance by acting.
 - Tradecraft: scan to confirm what's reachable; exploit an exposed vuln to gain \
 a foothold; lateral_move along trust/network edges; loot a node to collect \
 credentials (some edges are credential-gated — loot the credential first); \
@@ -122,14 +125,18 @@ def has_api_key() -> bool:
 
 class LLMBrain:
     """An Anthropic tool-use agent. Stateful across a run: it threads each tool
-    result back into the conversation so the model reasons with full history."""
+    result back into the conversation so the model reasons with full history.
+
+    Streams the model's reasoning token-by-token via `emit` so the UI can show
+    the agent thinking live, then returns the tool call it commits to.
+    """
 
     def __init__(self, client: Any = None, model: str = DEFAULT_MODEL) -> None:
         if client is None:
             import anthropic  # imported lazily so tests can inject a fake client
-            # Pass the key explicitly (don't rely on the SDK's implicit env read,
-            # which can pick up a stale/empty ANTHROPIC_API_KEY from the shell).
-            client = anthropic.Anthropic(
+            # Async client so streaming doesn't block the event loop. Key passed
+            # explicitly (the SDK's implicit env read can pick up a stale/empty one).
+            client = anthropic.AsyncAnthropic(
                 api_key=os.environ.get("ANTHROPIC_API_KEY"),
                 timeout=PER_CALL_TIMEOUT,
             )
@@ -138,7 +145,8 @@ class LLMBrain:
         self.messages: list[dict[str, Any]] = []
         self._pending_tool_use_id: Optional[str] = None
 
-    def decide(self, perception: dict[str, Any], _twin: Any) -> Optional[dict[str, Any]]:
+    async def decide(self, perception: dict[str, Any], _twin: Any,
+                     emit: Any = None) -> Optional[dict[str, Any]]:
         # Feed the model the current situation — as the first user turn, or as the
         # tool_result for the action it requested last turn.
         content = json.dumps(perception, default=str)
@@ -155,20 +163,29 @@ class LLMBrain:
             })
             self._pending_tool_use_id = None
 
-        response = self.client.messages.create(
+        step = perception.get("step")
+        text_parts: list[str] = []
+        async with self.client.messages.stream(
             model=self.model,
             max_tokens=1024,
             temperature=TEMPERATURE,
             system=SYSTEM_PROMPT,
             tools=TOOL_SCHEMAS,
             messages=self.messages,
-        )
+        ) as stream:
+            # Stream reasoning tokens to the UI as the model generates them.
+            async for chunk in stream.text_stream:
+                text_parts.append(chunk)
+                if emit is not None:
+                    await emit({"type": "reasoning_delta",
+                                "payload": {"step": step, "chunk": chunk}})
+            final = await stream.get_final_message()
 
         # Record the assistant turn verbatim so the next tool_result lines up.
-        self.messages.append({"role": "assistant", "content": response.content})
+        self.messages.append({"role": "assistant", "content": final.content})
 
-        thought = "".join(b.text for b in response.content if b.type == "text").strip()
-        tool_use = next((b for b in response.content if b.type == "tool_use"), None)
+        thought = "".join(text_parts).strip()
+        tool_use = next((b for b in final.content if b.type == "tool_use"), None)
         if tool_use is None:
             return None  # the model chose to stop
 

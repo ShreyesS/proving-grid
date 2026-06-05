@@ -21,11 +21,13 @@ from typing import Any, Awaitable, Callable, Optional
 from tools import TOOLS, ToolResult
 from twin import NetworkTwin
 
-# A brain takes a perception + the twin and returns the next action, or None to stop.
-Action = dict[str, Any]
-Decide = Callable[[dict[str, Any], NetworkTwin], Optional[Action]]
 # emit is how the loop streams events out (to the WebSocket).
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
+# A brain takes a perception + the twin (+ emit, for live token streaming) and
+# returns the next action, or None to stop. It is async so a streaming brain can
+# emit reasoning tokens as the model generates them.
+Action = dict[str, Any]
+Decide = Callable[[dict[str, Any], NetworkTwin, Optional[Emit]], Awaitable[Optional[Action]]]
 
 OBJECTIVE = "Find and exfiltrate the customer database (a db_server node)."
 
@@ -123,6 +125,8 @@ async def run_attack(
     step_delay: float = 0.6,
 ) -> str:
     """Run the bounded attack, streaming reasoning + state. Returns the outcome."""
+    # Signal a fresh run so the UI can reset its reasoning panel.
+    await emit({"type": "run_start", "payload": {}})
     # The attacker controls their own origin to begin with.
     twin.set_compromised(start_node, True)
     twin.set_privilege(start_node, "root")
@@ -139,10 +143,10 @@ async def run_attack(
         perception["max_steps"] = max_steps
 
         try:
-            action = decide(perception, twin)
+            action = await decide(perception, twin, emit)
         except Exception as exc:  # a failed LLM call must not crash the run
             await emit({"type": "reasoning", "payload": {
-                "step": step + 1, "text": f"[brain error] {exc}",
+                "step": step + 1, "kind": "error", "text": f"[brain error] {exc}",
                 "tool": None, "ok": False,
             }})
             outcome = "error"
@@ -172,11 +176,14 @@ async def run_attack(
         line = result.get("observation") or result.get("error") or ""
         await emit({"type": "reasoning", "payload": {
             "step": step,
+            "kind": "step",
             "text": f"[{step}] {action.get('thought', '')}  →  {line}",
             "thought": action.get("thought", ""),
             "tool": result.get("tool"),
             "target": result.get("target"),
             "technique": result.get("technique"),
+            "exposure": result.get("exposure"),   # the CVE / cred / trust edge abused
+            "observation": line,
             "ok": result.get("ok"),
         }})
         await emit({"type": "state", "payload": twin.to_dict()})
@@ -197,7 +204,9 @@ async def run_attack(
         )
         await emit({"type": "reasoning", "payload": {
             "step": step + 1,
+            "kind": "finding",
             "text": f"[FINDING] Attack path to crown jewel: {chain}",
+            "exposures_chained": findings["exposures_chained"],
             "tool": None, "ok": True,
         }})
     await emit({"type": "run_end", "payload": {**findings, "findings": findings}})
@@ -228,7 +237,8 @@ def scripted_path_a() -> Decide:
     ]
     state = {"i": 0}
 
-    def decide(_perception: dict[str, Any], _twin: NetworkTwin) -> Optional[Action]:
+    async def decide(_perception: dict[str, Any], _twin: NetworkTwin,
+                     _emit: Optional[Emit] = None) -> Optional[Action]:
         if state["i"] >= len(plan):
             return None
         action = plan[state["i"]]
