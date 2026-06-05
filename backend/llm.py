@@ -193,6 +193,10 @@ class LLMBrain:
             temperature=TEMPERATURE,
             system=SYSTEM_PROMPT,
             tools=TOOL_SCHEMAS,
+            # One tool call per turn — our loop feeds back exactly one
+            # tool_result, so parallel tool calls would leave a tool_use
+            # dangling and the API rejects the conversation (400).
+            tool_choice={"type": "auto", "disable_parallel_tool_use": True},
             messages=self.messages,
         ) as stream:
             # Stream reasoning tokens to the UI as the model generates them.
