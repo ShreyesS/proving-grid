@@ -6,7 +6,9 @@ const CVE_RE = /^[A-Z][A-Z0-9-]+$/; // CVE-ish exposure ids (skip creds / trust:
 
 export default function PatchHud({ lastRun, hardened, patchedWhere, onPatch, onRestore }) {
   const cves = (lastRun?.exposures || []).filter((e) => CVE_RE.test(e));
-  const hasSomething = (lastRun && cves.length > 0) || (hardened && hardened.length > 0);
+  // Patching is a defended-run response — only offer it after Run ▸ Defended.
+  const showPatch = lastRun && lastRun.defended && cves.length > 0;
+  const hasSomething = showPatch || (hardened && hardened.length > 0);
   if (!hasSomething) return null;
 
   const tag = lastRun?.evaded_defense
@@ -35,7 +37,7 @@ export default function PatchHud({ lastRun, hardened, patchedWhere, onPatch, onR
         color: "#cbd5e1",
       }}
     >
-      {lastRun && cves.length > 0 && (
+      {showPatch && (
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
             <strong style={{ color: "#e7ecf3" }}>Last attack</strong>
@@ -59,13 +61,13 @@ export default function PatchHud({ lastRun, hardened, patchedWhere, onPatch, onR
               borderRadius: 6, cursor: "pointer", letterSpacing: "0.02em",
             }}
           >
-            🛡 Patch this attack’s {cves.length} CVE{cves.length === 1 ? "" : "s"}
+            Patch this attack’s {cves.length} CVE{cves.length === 1 ? "" : "s"}
           </button>
         </>
       )}
 
       {hardened && hardened.length > 0 && (
-        <div style={{ marginTop: lastRun && cves.length > 0 ? 10 : 0 }}>
+        <div style={{ marginTop: showPatch ? 10 : 0 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <strong style={{ color: "#86efac", fontSize: "0.72rem" }}>
               ✓ Patched ({hardened.length})

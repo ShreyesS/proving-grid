@@ -216,42 +216,34 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Proving Grid — Network Twin</h1>
+        <h1>Mahoraga — Twin Network Rehearsal</h1>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {(() => {
             const busy = running || !!evalProgress || wsStatus !== "connected";
-            const solid = (bg) => ({
-              padding: "6px 14px",
-              background: busy ? "#374151" : bg,
-              color: busy ? "#9ca3af" : "#fff",
-              border: "none", borderRadius: 6, fontWeight: 600,
-              fontSize: "0.82rem", cursor: busy ? "not-allowed" : "pointer",
-              letterSpacing: "0.03em",
-            });
+            const outline = {
+              padding: "6px 14px", background: "transparent",
+              color: busy ? "#4b5563" : "#8b9cb3", border: "1px solid",
+              borderColor: busy ? "#4b5563" : "#8b9cb3", borderRadius: 6,
+              fontWeight: 600, fontSize: "0.82rem",
+              cursor: busy ? "not-allowed" : "pointer", letterSpacing: "0.03em",
+            };
             return (
               <>
                 <button onClick={() => triggerRun(false)} disabled={busy}
-                  title="Attacker only — no defense" style={solid("#dc2626")}>
+                  title="Attacker only — no defense" style={outline}>
                   {running ? "Running…" : "Run ▸ Undefended"}
                 </button>
                 <button onClick={() => triggerRun(true)} disabled={busy}
-                  title="Attacker vs defender" style={solid("#2563eb")}>
+                  title="Attacker vs defender" style={outline}>
                   Run ▸ Defended
                 </button>
                 <button onClick={runEval} disabled={busy}
                   title="Run N rehearsals and report agent performance"
-                  style={solid("#7c3aed")}>
+                  style={outline}>
                   {evalProgress ? `Eval ${evalProgress.run}/${evalProgress.of}…` : "Eval ×5"}
                 </button>
                 <button onClick={clearMemory} disabled={busy}
-                  title="Reset the agent's cross-run memory"
-                  style={{
-                    padding: "6px 12px", background: "transparent",
-                    color: busy ? "#4b5563" : "#8b9cb3", border: "1px solid",
-                    borderColor: busy ? "#4b5563" : "#8b9cb3", borderRadius: 6,
-                    fontWeight: 600, fontSize: "0.82rem",
-                    cursor: busy ? "not-allowed" : "pointer", letterSpacing: "0.03em",
-                  }}>
+                  title="Reset the agent's cross-run memory" style={outline}>
                   Clear Memory
                 </button>
               </>
@@ -274,24 +266,6 @@ export default function App() {
             }}
           >
             Reset
-          </button>
-          <button
-            onClick={openEditor}
-            disabled={running}
-            style={{
-              padding: "6px 16px",
-              background: "transparent",
-              color: running ? "#4b5563" : "#8b9cb3",
-              border: "1px solid",
-              borderColor: running ? "#4b5563" : "#8b9cb3",
-              borderRadius: 6,
-              fontWeight: 600,
-              fontSize: "0.85rem",
-              cursor: running ? "not-allowed" : "pointer",
-              letterSpacing: "0.03em",
-            }}
-          >
-            Patch Network
           </button>
           <span style={{ fontSize: "0.75rem", color: "#8b9cb3" }}>
             WebSocket: {wsStatus}
