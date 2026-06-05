@@ -1,6 +1,22 @@
 # Single source of truth for the proving-grid digital twin.
 # Nodes: identity, role, services, modeled vulns (simulation only).
 # Edges: trust / reachability for lateral movement and defender isolation.
+#
+# Depth layered on top of the base topology (meaningful branching):
+#   zone:         kill-chain segment (external -> edge -> dmz -> corp) for layout + cross-zone detection.
+#   criticality:  0-100, how much live service is lost if the defender isolates the node
+#                 (feeds costed containment + mission_integrity in the defender milestone).
+#   loot:         credentials/data an attacker collects; a credential can unlock a gated edge.
+#   requires_cred (edges): a shortcut edge that only opens once its credential is looted.
+#
+# Routes to the crown jewel (db_server), best first:
+#   A (best):  internet -> cdn_edge -> load_balancer -> app_server -> db_server
+#              app_server holds `db_service_cred`, which unlocks the gated app_server->db_server
+#              hop. Fewest hops, the cred is right where you land. "that's the whole vuln."
+#   B (alt):   internet -> cdn_edge -> load_balancer -> cache_server -> db_server   (low trust)
+#   C (corp):  internet -> cdn_edge -> corp_vpn -> corp_resources -> db_server      (longer)
+#   Dead-end:  workstation -> dev_laptop  (loot, but NO route onward to db_server)
+#   Decoy:     staging_decoy advertises an RCE but is fully patched -> exploit always fails.
 
 mission:
   goal: exfiltrate customer database
@@ -10,6 +26,8 @@ mission:
 nodes:
   - id: internet
     type: external
+    zone: external
+    criticality: 0
     services: []
     modeled_vulns: []
     defender_monitor: false
@@ -17,6 +35,8 @@ nodes:
 
   - id: cdn_edge
     type: cdn_edge
+    zone: edge
+    criticality: 70
     services:
       - nginx
       - tls_termination
@@ -33,6 +53,8 @@ nodes:
 
   - id: load_balancer
     type: load_balancer
+    zone: edge
+    criticality: 85          # customer-facing traffic — costly to isolate
     services:
       - haproxy
       - health_checks
@@ -43,8 +65,26 @@ nodes:
     defender_monitor: true
     mission_critical: false
 
+  - id: staging_decoy
+    type: staging
+    zone: edge
+    criticality: 10
+    services:
+      - jenkins
+      - test_harness
+    modeled_vulns:
+      # LOOKS exploitable but isn't: advertised RCE, host is fully patched -> exploit fails.
+      - id: STAGING-RCE
+        technique: initial_access
+        description: Advertised RCE in staging build server — host is fully patched (exploit fails)
+        patched: true
+    defender_monitor: true
+    mission_critical: false
+
   - id: app_server
     type: app_server
+    zone: dmz
+    criticality: 80          # customer web/API tier
     services:
       - api_gateway
       - auth_service
@@ -55,11 +95,19 @@ nodes:
       - id: APP-DESER
         technique: privilege_escalation
         description: Unsafe deserialization in session blob parser
+    loot:
+      # The shortcut credential: unlocks the gated app_server -> db_server hop.
+      - id: db_service_cred
+        type: credential
+        description: Reused service-account credential with SELECT on customer PII
+        unlocks_edge: [app_server, db_server]
     defender_monitor: true
     mission_critical: false
 
   - id: cache_server
     type: cache_server
+    zone: dmz
+    criticality: 60
     services:
       - redis
       - session_store
@@ -70,23 +118,10 @@ nodes:
     defender_monitor: true
     mission_critical: false
 
-  - id: db_server
-    type: db_server
-    services:
-      - postgresql
-      - customer_db
-    modeled_vulns:
-      - id: DB-CRED-REUSE
-        technique: credential_access
-        description: Application service account has SELECT on customer PII tables
-      - id: DB-BACKUP-EXPORT
-        technique: exfiltration
-        description: Nightly backup job can be triggered to attacker-controlled bucket (modeled)
-    defender_monitor: true
-    mission_critical: true
-
   - id: corp_vpn
     type: firewall
+    zone: dmz
+    criticality: 75
     services:
       - vpn_gateway
       - split_tunnel
@@ -99,6 +134,8 @@ nodes:
 
   - id: workstation
     type: workstation
+    zone: corp
+    criticality: 30
     services:
       - email_client
       - browser
@@ -111,6 +148,8 @@ nodes:
 
   - id: corp_resources
     type: corp_resources
+    zone: corp
+    criticality: 70
     services:
       - admin_console
       - deployment_pipeline
@@ -122,6 +161,46 @@ nodes:
     defender_monitor: true
     mission_critical: false
 
+  - id: dev_laptop
+    type: workstation
+    zone: corp
+    criticality: 20
+    services:
+      - ide
+      - git_client
+    modeled_vulns:
+      - id: DEV-RCE
+        technique: lateral_movement
+        description: Outdated IDE plugin allows code execution from a malicious repo
+    loot:
+      # Tempting but useless: no edge leads onward from here, and it isn't the goal.
+      - id: stale_repo
+        type: data
+        description: Months-old source mirror — no route onward, no mission value (decoy)
+    defender_monitor: false
+    mission_critical: false
+
+  - id: db_server
+    type: db_server
+    zone: corp
+    criticality: 100         # crown jewel
+    services:
+      - postgresql
+      - customer_db
+    modeled_vulns:
+      - id: DB-CRED-REUSE
+        technique: credential_access
+        description: Application service account has SELECT on customer PII tables
+      - id: DB-BACKUP-EXPORT
+        technique: exfiltration
+        description: Nightly backup job can be triggered to attacker-controlled bucket (modeled)
+    loot:
+      - id: customer_db
+        type: data
+        description: Customer database dump (mission objective)
+    defender_monitor: true
+    mission_critical: true
+
 edges:
   - source: internet
     target: cdn_edge
@@ -130,6 +209,10 @@ edges:
   - source: cdn_edge
     target: load_balancer
     trust: low
+
+  - source: cdn_edge
+    target: staging_decoy
+    trust: low # reachable from the edge, but a patched dead-end
 
   - source: load_balancer
     target: app_server
@@ -142,6 +225,7 @@ edges:
   - source: app_server
     target: db_server
     trust: high # service account cred reuse — that's the whole vuln
+    requires_cred: db_service_cred # shortcut hop, opens once db_service_cred is looted
 
   - source: cache_server
     target: db_server
@@ -162,6 +246,10 @@ edges:
   - source: workstation
     target: corp_resources
     trust: high
+
+  - source: workstation
+    target: dev_laptop
+    trust: medium # inbound only: dev_laptop has no edge onward (dead-end)
 
   - source: corp_resources
     target: db_server
