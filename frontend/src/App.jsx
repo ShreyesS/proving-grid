@@ -50,20 +50,19 @@ export default function App() {
   const [loadError, setLoadError] = useState(null);
   const [running, setRunning] = useState(false);
 
-  async function triggerRun() {
-    setRunning(true);
-    try {
-      await fetch("/run", { method: "POST" });
-    } catch (err) {
-      console.error("Failed to start run:", err);
-    } finally {
-      setRunning(false);
-    }
+  function triggerRun() {
+    fetch("/run", { method: "POST" }).catch((err) =>
+      console.error("Failed to start run:", err)
+    );
   }
 
   const applyMessage = useCallback((msg) => {
     if (msg.type === "run_start") {
-      setReasoningSteps([]); // fresh run — clear the panel
+      setRunning(true);
+      setReasoningSteps([]);
+    }
+    if (msg.type === "run_end") {
+      setRunning(false);
     }
     if (msg.type === "state" && msg.payload) {
       setSnapshot(msg.payload);
