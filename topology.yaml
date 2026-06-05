@@ -81,6 +81,35 @@ nodes:
     defender_monitor: true
     mission_critical: false
 
+  - id: firewall
+    type: firewall
+    zone: dmz
+    criticality: 90          # isolating this cuts the entire corp zone off
+    services:
+      - stateful_inspection
+      - zone_segmentation
+    modeled_vulns:
+      - id: FW-POLICY-DRIFT
+        technique: defense_evasion
+        description: Overly permissive rule allows DMZ-to-corp traffic on non-standard port
+    defender_monitor: true
+    mission_critical: false
+
+  - id: cloud_vpc
+    type: cloud_vpc
+    zone: edge
+    criticality: 65
+    services:
+      - aws_vpc
+      - s3_bucket
+      - iam_roles
+    modeled_vulns:
+      - id: VPC-IAM-OVERPRIV
+        technique: privilege_escalation
+        description: Overpermissioned IAM role allows cross-account S3 read
+    defender_monitor: true
+    mission_critical: false
+
   - id: app_server
     type: app_server
     zone: dmz
@@ -215,8 +244,24 @@ edges:
     trust: low # reachable from the edge, but a patched dead-end
 
   - source: load_balancer
+    target: firewall
+    trust: low
+
+  - source: firewall
     target: app_server
     trust: medium
+
+  - source: firewall
+    target: corp_resources
+    trust: medium
+
+  - source: cdn_edge
+    target: cloud_vpc
+    trust: low
+
+  - source: cloud_vpc
+    target: db_server
+    trust: medium         # cloud path: VPC peering into the data tier
 
   - source: load_balancer
     target: cache_server
