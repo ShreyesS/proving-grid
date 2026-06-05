@@ -9,12 +9,13 @@ def twin() -> NetworkTwin:
 
 
 def test_loads_topology_nodes_and_edges(twin: NetworkTwin) -> None:
-    assert twin.graph.number_of_nodes() == 11
-    assert twin.graph.number_of_edges() == 13
+    assert twin.graph.number_of_nodes() == 13
+    assert twin.graph.number_of_edges() == 17
 
 
 def test_get_neighbors_bidirectional_over_active_edges(twin: NetworkTwin) -> None:
     assert twin.get_neighbors("cdn_edge") == [
+        "cloud_vpc",
         "corp_vpn",
         "internet",
         "load_balancer",
@@ -40,7 +41,7 @@ def test_isolation_cuts_neighbors(twin: NetworkTwin) -> None:
     twin.set_isolated("cdn_edge")
     assert twin.is_isolated("cdn_edge")
     assert twin.get_neighbors("cdn_edge") == []
-    assert twin.get_neighbors("load_balancer") == ["app_server", "cache_server"]
+    assert twin.get_neighbors("load_balancer") == ["cache_server", "firewall"]
 
 
 def test_mission_integrity(twin: NetworkTwin) -> None:
@@ -55,8 +56,8 @@ def test_mission_integrity(twin: NetworkTwin) -> None:
 def test_to_dict_snapshot(twin: NetworkTwin) -> None:
     snapshot = twin.to_dict()
     assert snapshot["mission_integrity"] == 100.0
-    assert len(snapshot["nodes"]) == 11
-    assert len(snapshot["edges"]) == 13
+    assert len(snapshot["nodes"]) == 13
+    assert len(snapshot["edges"]) == 17
     db = next(n for n in snapshot["nodes"] if n["id"] == "db_server")
     assert db["mission_critical"] is True
 

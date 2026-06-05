@@ -40,10 +40,11 @@ def test_exploit_unreachable_fails(twin):
 
 
 def test_lateral_move_respects_credential_gate(twin):
-    # Walk to app_server first.
+    # Walk to app_server first (through the firewall, per the topology).
     tools.exploit(twin, "cdn_edge")
     tools.lateral_move(twin, "cdn_edge", "load_balancer")
-    tools.lateral_move(twin, "load_balancer", "app_server")
+    tools.lateral_move(twin, "load_balancer", "firewall")
+    tools.lateral_move(twin, "firewall", "app_server")
 
     # The db_server hop is credential-gated; it fails before looting.
     blocked = tools.lateral_move(twin, "app_server", "db_server")
@@ -63,7 +64,8 @@ def test_exfiltrate_only_goal_node(twin):
     assert tools.exfiltrate(twin, "cdn_edge")["ok"] is False  # not the goal
 
     tools.lateral_move(twin, "cdn_edge", "load_balancer")
-    tools.lateral_move(twin, "load_balancer", "app_server")
+    tools.lateral_move(twin, "load_balancer", "firewall")
+    tools.lateral_move(twin, "firewall", "app_server")
     tools.loot(twin, "app_server")
     tools.lateral_move(twin, "app_server", "db_server")
     res = tools.exfiltrate(twin, "db_server")
