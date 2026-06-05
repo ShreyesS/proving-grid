@@ -115,6 +115,14 @@ def lateral_move(twin: NetworkTwin, from_node: str, target: str) -> ToolResult:
     if not twin.has_cred(cred):
         return _result("lateral_move", False, target=target, technique="lateral-movement",
                        error=f"edge {from_node} -> {target} requires credential '{cred}' (not looted)")
+    # Trust gate: lateral movement rides a real trust relationship (medium/high
+    # trust, or a credential). A low-trust edge is mere network reachability —
+    # to take that node you must `exploit` it (a vuln). This is why patching a
+    # CVE matters: it closes the exploit route over low-trust edges.
+    if edge.get("trust") == "low" and not cred:
+        return _result("lateral_move", False, target=target, technique="lateral-movement",
+                       error=f"no trust path {from_node} -> {target} (trust=low) — "
+                             f"exploit the target to move there")
     # Access-level gate: crossing into the protected zone needs root on the source.
     if twin.crossing_into_protected(from_node, target) and twin.get_privilege(from_node) != "root":
         return _result("lateral_move", False, target=target, technique="lateral-movement",

@@ -10,16 +10,23 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 import yaml as _yaml
 
+import hardening
 from attacker import run_attack
 from llm import make_brain
 from memory import MEMORY
 from twin import DEFAULT_TOPOLOGY_PATH, load_twin
+
+
+def load_hardened():
+    """Fresh twin with the operator's patch overlay applied."""
+    return hardening.apply(load_twin())
+
 
 app = FastAPI(title="Proving Grid")
 
@@ -77,7 +84,7 @@ async def put_topology(request) -> str:
 
 @app.get("/state")
 def get_state() -> dict:
-    twin = load_twin()
+    twin = load_hardened()
     return twin.to_dict()
 
 
@@ -96,7 +103,7 @@ async def run(brain: str = "auto", defended: bool = False, use_memory: bool = Tr
         )
     _run_in_progress = True
     try:
-        twin = load_twin()
+        twin = load_hardened()
         # Cross-run memory: feed prior paths so the agent hunts a new route.
         prior = MEMORY.path_summaries() if use_memory else None
         decide = make_brain(brain, prior_paths=prior)
@@ -130,9 +137,10 @@ async def run_eval(n: int = 5, defended: bool = True, brain: str = "auto"):
         return None
 
     try:
+        MEMORY.clear()  # a clean N-run benchmark, not accumulated onto prior runs
         await emit({"type": "eval_start", "payload": {"n": n}})
         for i in range(n):
-            twin = load_twin()
+            twin = load_hardened()
             decide = make_brain(brain, prior_paths=MEMORY.path_summaries())
             outcome = await run_attack(twin, decide, noop, defended=defended,
                                        memory=MEMORY, step_delay=0)
@@ -157,13 +165,47 @@ def clear_memory() -> dict:
     return {"cleared": True}
 
 
+@app.get("/patch")
+def get_patches() -> dict:
+    twin = load_twin()
+    where = {
+        v["id"]: n
+        for n, data in twin.graph.nodes(data=True)
+        for v in (data.get("modeled_vulns") or [])
+        if v["id"] in hardening.HARDENED_VULNS
+    }
+    return {"patched": hardening.status(), "where": where}
+
+
+@app.post("/patch")
+def patch_vulns(vulns: list[str] = Query(default=[])) -> dict:
+    """Patch specific CVEs (the ones an attack path exploited). Applied on the
+    next twin load — re-run to prove whether it closed the path. Returns which
+    node each patched CVE lives on (for the 'what was patched where' reveal)."""
+    hardening.patch(vulns)
+    twin = load_twin()
+    where = {
+        v["id"]: n
+        for n, data in twin.graph.nodes(data=True)
+        for v in (data.get("modeled_vulns") or [])
+        if v["id"] in hardening.HARDENED_VULNS
+    }
+    return {"patched": hardening.status(), "where": where}
+
+
+@app.post("/patch/reset")
+def reset_patches() -> dict:
+    hardening.reset()
+    return {"patched": hardening.status()}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await manager.connect(websocket)
     try:
         # Send the current snapshot on connect so the UI paints immediately.
         await websocket.send_text(
-            json.dumps({"type": "state", "payload": load_twin().to_dict()})
+            json.dumps({"type": "state", "payload": load_hardened().to_dict()})
         )
         while True:
             # We don't expect client messages yet; this keeps the socket open

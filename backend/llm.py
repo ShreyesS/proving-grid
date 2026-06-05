@@ -47,8 +47,10 @@ observe, which SPECIFIC weakness you're taking advantage of and why it works \
 (name the CVE / credential / trust relationship), then call EXACTLY ONE tool. \
 You only advance by acting.
 - Tradecraft: scan to confirm what's reachable; exploit an exposed vuln to gain \
-a foothold; lateral_move along trust/network edges; loot a node to collect \
-credentials (some edges are credential-gated — loot the credential first); \
+a foothold; lateral_move rides a trust relationship — each frontier node's \
+`traversal` says whether `lateral_move` works (trust/credential) or you must \
+`exploit` it (a low-trust, network-only edge needs a vuln); loot a node to \
+collect credentials (some edges are credential-gated — loot the credential first); \
 escalate when you need higher privilege; exfiltrate once you're on the goal.
 - ACCESS LEVELS MATTER: a foothold starts at `user` privilege. Crossing into the \
 protected zone (where the database lives) requires `root` on your current node, \
@@ -193,6 +195,10 @@ class LLMBrain:
             temperature=TEMPERATURE,
             system=SYSTEM_PROMPT,
             tools=TOOL_SCHEMAS,
+            # One tool call per turn — our loop feeds back exactly one
+            # tool_result, so parallel tool calls would leave a tool_use
+            # dangling and the API rejects the conversation (400).
+            tool_choice={"type": "auto", "disable_parallel_tool_use": True},
             messages=self.messages,
         ) as stream:
             # Stream reasoning tokens to the UI as the model generates them.

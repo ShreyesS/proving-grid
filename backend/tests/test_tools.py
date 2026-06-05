@@ -40,10 +40,11 @@ def test_exploit_unreachable_fails(twin):
 
 
 def test_lateral_move_respects_credential_gate(twin):
-    # Walk to app_server first (through the firewall, per the topology).
+    # Walk to app_server first. Low-trust hops need exploit; firewall->app_server
+    # is a medium-trust relationship so lateral_move works.
     tools.exploit(twin, "cdn_edge")
-    tools.lateral_move(twin, "cdn_edge", "load_balancer")
-    tools.lateral_move(twin, "load_balancer", "firewall")
+    tools.exploit(twin, "load_balancer")
+    tools.exploit(twin, "firewall")
     tools.lateral_move(twin, "firewall", "app_server")
 
     # The db_server hop is credential-gated; it fails before looting.
@@ -67,8 +68,8 @@ def test_exfiltrate_only_goal_node(twin):
     # Exfil requires an owned goal node.
     assert tools.exfiltrate(twin, "cdn_edge")["ok"] is False  # not the goal
 
-    tools.lateral_move(twin, "cdn_edge", "load_balancer")
-    tools.lateral_move(twin, "load_balancer", "firewall")
+    tools.exploit(twin, "load_balancer")
+    tools.exploit(twin, "firewall")
     tools.lateral_move(twin, "firewall", "app_server")
     tools.loot(twin, "app_server")
     tools.escalate(twin, "app_server")          # root needed to cross into corp
