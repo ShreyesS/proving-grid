@@ -56,6 +56,16 @@ export default function App() {
     );
   }
 
+  function reloadTopology() {
+    fetch("/state")
+      .then((r) => r.json())
+      .then((data) => {
+        setSnapshot(data);
+        setReasoningSteps([]);
+      })
+      .catch((err) => console.error("Failed to reload topology:", err));
+  }
+
   const applyMessage = useCallback((msg) => {
     if (msg.type === "run_start") {
       setRunning(true);
@@ -134,6 +144,24 @@ export default function App() {
             }}
           >
             {running ? "Running…" : "Run Attack"}
+          </button>
+          <button
+            onClick={reloadTopology}
+            disabled={running}
+            style={{
+              padding: "6px 16px",
+              background: "transparent",
+              color: running ? "#4b5563" : "#8b9cb3",
+              border: "1px solid",
+              borderColor: running ? "#4b5563" : "#8b9cb3",
+              borderRadius: 6,
+              fontWeight: 600,
+              fontSize: "0.85rem",
+              cursor: running ? "not-allowed" : "pointer",
+              letterSpacing: "0.03em",
+            }}
+          >
+            Reset
           </button>
           <span style={{ fontSize: "0.75rem", color: "#8b9cb3" }}>
             WebSocket: {wsStatus}

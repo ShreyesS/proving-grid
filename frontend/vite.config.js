@@ -7,6 +7,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/state": "http://localhost:8000",
+      "/run": "http://localhost:8000",
       "/ws": {
         target: "ws://localhost:8000",
         ws: true,
