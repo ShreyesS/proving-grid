@@ -48,6 +48,18 @@ export default function App() {
   const [reasoningSteps, setReasoningSteps] = useState([]);
   const [wsStatus, setWsStatus] = useState("connecting");
   const [loadError, setLoadError] = useState(null);
+  const [running, setRunning] = useState(false);
+
+  async function triggerRun() {
+    setRunning(true);
+    try {
+      await fetch("/run", { method: "POST" });
+    } catch (err) {
+      console.error("Failed to start run:", err);
+    } finally {
+      setRunning(false);
+    }
+  }
 
   const applyMessage = useCallback((msg) => {
     if (msg.type === "run_start") {
@@ -106,9 +118,28 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <h1>Proving Grid — Network Twin</h1>
-        <span style={{ fontSize: "0.75rem", color: "#8b9cb3" }}>
-          WebSocket: {wsStatus}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            onClick={triggerRun}
+            disabled={running || wsStatus !== "connected"}
+            style={{
+              padding: "6px 16px",
+              background: running ? "#374151" : "#dc2626",
+              color: running ? "#9ca3af" : "#fff",
+              border: "none",
+              borderRadius: 6,
+              fontWeight: 600,
+              fontSize: "0.85rem",
+              cursor: running ? "not-allowed" : "pointer",
+              letterSpacing: "0.03em",
+            }}
+          >
+            {running ? "Running…" : "Run Attack"}
+          </button>
+          <span style={{ fontSize: "0.75rem", color: "#8b9cb3" }}>
+            WebSocket: {wsStatus}
+          </span>
+        </div>
       </header>
       <main className="app-main">
         {loadError ? (
