@@ -1,14 +1,17 @@
 """Attacker loop: perceive -> decide -> act -> observe, bounded and streamed.
 
 The loop is brain-agnostic. `decide` is the swappable decision-maker:
-  - M1 ships `scripted_path_a` (a fixed, deterministic plan) to prove the
-    vertical slice end to end.
-  - M2 will drop in an LLM-backed `decide` behind llm.py — same loop, same
-    tools, same streaming. Only the brain changes.
+  - scripted_path_a: a fixed plan (M1) — now the deterministic backup / replay brain.
+  - an LLM-backed decide (see llm.py): reasons over the perception and chooses.
+Only the brain changes; the loop, tools, and streaming are identical.
 
-Bounding (CLAUDE.md invariant): the loop always terminates — on goal, on a
-brain that stops, or at max_steps. Tool errors degrade gracefully into a
+Bounding (CLAUDE.md invariant): the loop always terminates — on goal, on a brain
+that stops or errors, or at max_steps. Tool errors and LLM errors degrade into a
 reasoning line; they never crash the run.
+
+On termination the loop emits a structured `findings` artifact — the discovered
+attack path (chain of node -> technique -> exposure abused). That artifact is the
+product deliverable (attack-path discovery) and seeds future memory/coverage work.
 """
 from __future__ import annotations
 
@@ -18,20 +21,64 @@ from typing import Any, Awaitable, Callable, Optional
 from tools import TOOLS, ToolResult
 from twin import NetworkTwin
 
-# A brain takes a perception + the twin and returns the next action, or None to stop.
-Action = dict[str, Any]
-Decide = Callable[[dict[str, Any], NetworkTwin], Optional[Action]]
 # emit is how the loop streams events out (to the WebSocket).
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
+# A brain takes a perception + the twin (+ emit, for live token streaming) and
+# returns the next action, or None to stop. It is async so a streaming brain can
+# emit reasoning tokens as the model generates them.
+Action = dict[str, Any]
+Decide = Callable[[dict[str, Any], NetworkTwin, Optional[Emit]], Awaitable[Optional[Action]]]
+
+OBJECTIVE = "Find and exfiltrate the customer database (a db_server node)."
 
 
-def perceive(twin: NetworkTwin) -> dict[str, Any]:
-    """What the attacker can currently observe about the twin."""
-    compromised = [n for n, d in twin.graph.nodes(data=True) if d.get("compromised")]
+def perceive(twin: NetworkTwin, last_result: Optional[ToolResult] = None) -> dict[str, Any]:
+    """Fog-of-war view: what the attacker can currently see and act on.
+
+    Shows owned nodes (with any un-looted loot) and the frontier — nodes reachable
+    over active edges from owned nodes, with the info needed to plan the next hop.
+    The full map is NOT revealed up front; it's discovered hop by hop.
+    """
+    owned = {n for n, d in twin.graph.nodes(data=True) if d.get("compromised")}
+
+    footholds = []
+    for n in sorted(owned):
+        data = twin.graph.nodes[n]
+        loot_available = [l["id"] for l in data.get("loot", [])
+                          if l["id"] not in twin.looted]
+        footholds.append({
+            "id": n,
+            "type": data.get("type"),
+            "zone": data.get("zone"),
+            "privilege": data.get("privilege", "none"),
+            "loot_available": loot_available,
+        })
+
+    frontier = []
+    for src in owned:
+        for _, tgt, edata in twin.graph.out_edges(src, data=True):
+            if not edata.get("active", True) or tgt in owned:
+                continue
+            t = twin.graph.nodes[tgt]
+            frontier.append({
+                "from": src,
+                "to": tgt,
+                "to_type": t.get("type"),
+                "to_zone": t.get("zone"),
+                "to_services": t.get("services", []),
+                "to_vulns": [v["id"] for v in t.get("modeled_vulns", [])],
+                "requires_cred": edata.get("requires_cred"),
+                "trust": edata.get("trust"),
+                "cross_zone": t.get("zone") != twin.graph.nodes[src].get("zone"),
+            })
+
     return {
-        "compromised": compromised,
-        "looted": sorted(twin.looted),
+        "objective": OBJECTIVE,
+        "footholds": footholds,
+        "frontier": frontier,
+        "looted_creds": sorted(twin.looted),
         "goal_reached": twin.is_goal_reached(),
+        "last_result": last_result,
     }
 
 
@@ -42,13 +89,30 @@ def _act(twin: NetworkTwin, action: Action) -> ToolResult:
     fn = TOOLS.get(tool)
     if fn is None:
         return {"tool": tool, "ok": False, "target": None, "technique": "",
-                "observation": "", "error": f"unknown tool '{tool}'"}
+                "observation": "", "error": f"unknown tool '{tool}'", "exposure": None}
     try:
         return fn(twin, **args)
     except Exception as exc:  # graceful degradation — bad args, etc.
         return {"tool": tool, "ok": False,
                 "target": args.get("target") or args.get("node") or args.get("from_node"),
-                "technique": "", "observation": "", "error": f"tool error: {exc}"}
+                "technique": "", "observation": "", "error": f"tool error: {exc}",
+                "exposure": None}
+
+
+def _build_findings(twin: NetworkTwin, outcome: str, steps: int,
+                    path: list[dict[str, Any]]) -> dict[str, Any]:
+    """The attack-path discovery artifact — the product deliverable."""
+    exposures = [p["exposure"] for p in path if p.get("exposure")]
+    crossed = sorted({p["target"] for p in path
+                      if p.get("cross_zone")})
+    return {
+        "outcome": outcome,
+        "steps": steps,
+        "reached_goal": twin.is_goal_reached(),
+        "path": path,                       # ordered chain of node -> technique -> exposure
+        "exposures_chained": exposures,     # the CVEs / creds / trust edges abused, in order
+        "crossed_zones_into": crossed,      # cross-zone hops (high-signal for defenders)
+    }
 
 
 async def run_attack(
@@ -57,10 +121,12 @@ async def run_attack(
     emit: Emit,
     *,
     start_node: str = "internet",
-    max_steps: int = 12,
+    max_steps: int = 14,
     step_delay: float = 0.6,
 ) -> str:
     """Run the bounded attack, streaming reasoning + state. Returns the outcome."""
+    # Signal a fresh run so the UI can reset its reasoning panel.
+    await emit({"type": "run_start", "payload": {}})
     # The attacker controls their own origin to begin with.
     twin.set_compromised(start_node, True)
     twin.set_privilege(start_node, "root")
@@ -68,29 +134,58 @@ async def run_attack(
 
     outcome = "blocked"
     step = 0
+    last_result: Optional[ToolResult] = None
+    path: list[dict[str, Any]] = []  # successful, state-changing steps -> findings
+
     while step < max_steps:
-        perception = perceive(twin)
-        action = decide(perception, twin)
+        perception = perceive(twin, last_result)
+        perception["step"] = step + 1
+        perception["max_steps"] = max_steps
+
+        try:
+            action = await decide(perception, twin, emit)
+        except Exception as exc:  # a failed LLM call must not crash the run
+            await emit({"type": "reasoning", "payload": {
+                "step": step + 1, "kind": "error", "text": f"[brain error] {exc}",
+                "tool": None, "ok": False,
+            }})
+            outcome = "error"
+            break
+
         if action is None:
             outcome = "goal" if twin.is_goal_reached() else "blocked"
             break
 
         step += 1
         result = _act(twin, action)
+        last_result = result
 
-        line = result.get("observation") or result.get("error") or ""
-        await emit({
-            "type": "reasoning",
-            "payload": {
+        if result.get("ok") and result.get("tool") != "scan":
+            path.append({
                 "step": step,
-                "text": f"[{step}] {action.get('thought', '')}  →  {line}",
-                "thought": action.get("thought", ""),
                 "tool": result.get("tool"),
                 "target": result.get("target"),
                 "technique": result.get("technique"),
-                "ok": result.get("ok"),
-            },
-        })
+                "exposure": result.get("exposure"),
+                "cross_zone": any(
+                    f["to"] == result.get("target") and f["cross_zone"]
+                    for f in perception["frontier"]
+                ),
+            })
+
+        line = result.get("observation") or result.get("error") or ""
+        await emit({"type": "reasoning", "payload": {
+            "step": step,
+            "kind": "step",
+            "text": f"[{step}] {action.get('thought', '')}  →  {line}",
+            "thought": action.get("thought", ""),
+            "tool": result.get("tool"),
+            "target": result.get("target"),
+            "technique": result.get("technique"),
+            "exposure": result.get("exposure"),   # the CVE / cred / trust edge abused
+            "observation": line,
+            "ok": result.get("ok"),
+        }})
         await emit({"type": "state", "payload": twin.to_dict()})
 
         if twin.is_goal_reached():
@@ -100,12 +195,27 @@ async def run_attack(
     else:
         outcome = "step_cap"
 
-    await emit({"type": "run_end", "payload": {"outcome": outcome, "steps": step}})
+    findings = _build_findings(twin, outcome, step, path)
+    # Surface the discovered path in the existing reasoning panel (UI needs no change).
+    if findings["reached_goal"]:
+        chain = " → ".join(
+            f"{p['target']}[{p['exposure']}]" if p.get("exposure") else p["target"]
+            for p in path
+        )
+        await emit({"type": "reasoning", "payload": {
+            "step": step + 1,
+            "kind": "finding",
+            "text": f"[FINDING] Attack path to crown jewel: {chain}",
+            "exposures_chained": findings["exposures_chained"],
+            "tool": None, "ok": True,
+        }})
+    await emit({"type": "run_end", "payload": {**findings, "findings": findings}})
     return outcome
 
 
 def scripted_path_a() -> Decide:
-    """M1 brain: the deterministic best path (Path A) with the credential shortcut.
+    """Deterministic best path (Path A) with the credential shortcut — the backup
+    / replay brain. Ignores perception; walks a fixed plan.
 
     internet -> cdn_edge -> load_balancer -> app_server -(loot cred)-> db_server -> exfil
     """
@@ -127,7 +237,8 @@ def scripted_path_a() -> Decide:
     ]
     state = {"i": 0}
 
-    def decide(_perception: dict[str, Any], _twin: NetworkTwin) -> Optional[Action]:
+    async def decide(_perception: dict[str, Any], _twin: NetworkTwin,
+                     _emit: Optional[Emit] = None) -> Optional[Action]:
         if state["i"] >= len(plan):
             return None
         action = plan[state["i"]]

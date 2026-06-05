@@ -8,6 +8,41 @@ function wsUrl() {
   return `${protocol}//${window.location.host}/ws`;
 }
 
+// Merge a streamed reasoning token into the in-progress step (by step number).
+function upsertDelta(prev, step, chunk) {
+  const i = prev.findIndex((s) => s.step === step && s.kind === "step");
+  if (i === -1) {
+    return [...prev, { step, kind: "step", thought: chunk, streaming: true }];
+  }
+  const next = prev.slice();
+  next[i] = { ...next[i], thought: (next[i].thought || "") + chunk, streaming: true };
+  return next;
+}
+
+// Finalize a step (after its tool ran) with technique / exposure / result.
+function upsertFinal(prev, p) {
+  if (p.kind === "finding" || p.kind === "error") {
+    return [...prev, { ...p, streaming: false }];
+  }
+  const i = prev.findIndex((s) => s.step === p.step && s.kind === "step");
+  const entry = {
+    step: p.step,
+    kind: "step",
+    thought: p.thought || (i >= 0 ? prev[i].thought : ""),
+    tool: p.tool,
+    target: p.target,
+    technique: p.technique,
+    exposure: p.exposure,
+    observation: p.observation,
+    ok: p.ok,
+    streaming: false,
+  };
+  if (i === -1) return [...prev, entry];
+  const next = prev.slice();
+  next[i] = entry;
+  return next;
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState(null);
   const [reasoningSteps, setReasoningSteps] = useState([]);
@@ -15,11 +50,18 @@ export default function App() {
   const [loadError, setLoadError] = useState(null);
 
   const applyMessage = useCallback((msg) => {
+    if (msg.type === "run_start") {
+      setReasoningSteps([]); // fresh run — clear the panel
+    }
     if (msg.type === "state" && msg.payload) {
       setSnapshot(msg.payload);
     }
+    if (msg.type === "reasoning_delta" && msg.payload) {
+      const { step, chunk } = msg.payload;
+      setReasoningSteps((prev) => upsertDelta(prev, step, chunk));
+    }
     if (msg.type === "reasoning" && msg.payload) {
-      setReasoningSteps((prev) => [...prev, msg.payload]);
+      setReasoningSteps((prev) => upsertFinal(prev, msg.payload));
     }
   }, []);
 

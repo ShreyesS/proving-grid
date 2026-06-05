@@ -14,7 +14,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from attacker import run_attack, scripted_path_a
+from attacker import run_attack
+from llm import make_brain
 from twin import load_twin
 
 app = FastAPI(title="Proving Grid")
@@ -62,8 +63,11 @@ def get_state() -> dict:
 
 
 @app.post("/run")
-async def run():
-    """Trigger a bounded attack rehearsal; events stream to all /ws clients."""
+async def run(brain: str = "auto"):
+    """Trigger a bounded attack rehearsal; events stream to all /ws clients.
+
+    brain: 'auto' (LLM if ANTHROPIC_API_KEY is set, else scripted) | 'llm' | 'scripted'.
+    """
     global _run_in_progress
     if _run_in_progress:
         return JSONResponse(
@@ -72,12 +76,13 @@ async def run():
     _run_in_progress = True
     try:
         twin = load_twin()
+        decide = make_brain(brain)
 
         async def emit(message: dict) -> None:
             await manager.broadcast(message)
 
-        outcome = await run_attack(twin, scripted_path_a(), emit)
-        return {"outcome": outcome}
+        outcome = await run_attack(twin, decide, emit)
+        return {"outcome": outcome, "brain": brain}
     finally:
         _run_in_progress = False
 
