@@ -59,7 +59,7 @@ export default function PatchHud({ lastRun, hardened, patchedWhere, onPatch, onR
               borderRadius: 6, cursor: "pointer", letterSpacing: "0.02em",
             }}
           >
-            🛡 Patch this attack’s {cves.length} CVE{cves.length === 1 ? "" : "s"}
+            Patch this attack’s {cves.length} CVE{cves.length === 1 ? "" : "s"}
           </button>
         </>
       )}
