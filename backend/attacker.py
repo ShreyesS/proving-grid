@@ -60,6 +60,18 @@ def perceive(twin: NetworkTwin, last_result: Optional[ToolResult] = None) -> dic
             if not edata.get("active", True) or tgt in owned:
                 continue
             t = twin.graph.nodes[tgt]
+            prof = twin.node_exploit_profile(tgt)
+            cred = edata.get("requires_cred")
+            needs_root = twin.crossing_into_protected(src, tgt)
+            # Dynamic accessibility: the static ease, folded with live cred/priv gates.
+            if prof["ease_label"] == "hardened":
+                accessibility = "hardened (all patched)"
+            elif cred and not twin.has_cred(cred):
+                accessibility = f"gated: needs credential {cred}"
+            elif needs_root and twin.get_privilege(src) != "root":
+                accessibility = f"gated: needs root on {src}"
+            else:
+                accessibility = prof["ease_label"]
             frontier.append({
                 "from": src,
                 "to": tgt,
@@ -67,9 +79,12 @@ def perceive(twin: NetworkTwin, last_result: Optional[ToolResult] = None) -> dic
                 "to_zone": t.get("zone"),
                 "to_services": t.get("services", []),
                 "to_vulns": [v["id"] for v in t.get("modeled_vulns", [])],
-                "requires_cred": edata.get("requires_cred"),
+                "cvss": prof["cvss"],
+                "epss": prof["epss"],
+                "accessibility": accessibility,   # dynamic: easy/moderate/hard or gated
+                "requires_cred": cred,
                 # Access level needed to make this hop: root to enter the protected zone.
-                "requires_privilege": "root" if twin.crossing_into_protected(src, tgt) else "user",
+                "requires_privilege": "root" if needs_root else "user",
                 "trust": edata.get("trust"),
                 "cross_zone": t.get("zone") != twin.graph.nodes[src].get("zone"),
             })
@@ -174,6 +189,8 @@ async def run_attack(
                 "target": result.get("target"),
                 "technique": result.get("technique"),
                 "exposure": result.get("exposure"),
+                "cvss": result.get("cvss"),
+                "epss": result.get("epss"),
                 "cross_zone": any(
                     f["to"] == result.get("target") and f["cross_zone"]
                     for f in perception["frontier"]

@@ -74,6 +74,28 @@ class NetworkTwin:
                 and self.node_zone(tgt) == self.protected_zone
                 and self.node_zone(src) != self.protected_zone)
 
+    def node_exploit_profile(self, node: str) -> dict[str, Any]:
+        """How exploitable a node is, from its modeled vulns — the *easiest* one.
+
+        `ease` in [0,1] blends CVSS severity with EPSS (the real-world probability
+        a CVE is exploited). This is the representative, scanner-grade difficulty
+        signal: a node with a critical, high-EPSS unpatched CVE is a soft target;
+        an all-patched node is hardened. (Dynamic, state-aware accessibility folds
+        this together with credential/privilege gates in the attacker's perceive.)"""
+        vulns = [v for v in (self.graph.nodes[node].get("modeled_vulns") or [])
+                 if not v.get("patched")]
+        if not vulns:
+            return {"cvss": None, "epss": None, "ease": 0.0,
+                    "ease_label": "hardened", "top_vuln": None}
+        best = max(vulns, key=lambda v: v.get("epss", 0) or 0)
+        cvss = best.get("cvss")
+        epss = best.get("epss", 0) or 0
+        ease = round(0.5 * (cvss or 0) / 10 + 0.5 * epss, 2)
+        label = ("trivial" if ease >= 0.8 else "easy" if ease >= 0.6
+                 else "moderate" if ease >= 0.4 else "hard")
+        return {"cvss": cvss, "epss": epss, "ease": ease,
+                "ease_label": label, "top_vuln": best["id"]}
+
     def get_neighbors(self, node: str) -> list[str]:
         """Adjacent nodes reachable via active edges (both directions)."""
         if not self.node_exists(node):
@@ -195,12 +217,14 @@ class NetworkTwin:
         """Snapshot for API / viz: nodes, edges, and mission integrity."""
         nodes = []
         for node_id, data in self.graph.nodes(data=True):
+            profile = self.node_exploit_profile(node_id)
             nodes.append(
                 {
                     "id": node_id,
                     "type": data.get("type"),
                     "zone": data.get("zone"),
                     "criticality": data.get("criticality", 0),
+                    "exploit_profile": profile,  # cvss/epss/ease of the easiest vuln
                     "services": data.get("services", []),
                     "modeled_vulns": data.get("modeled_vulns", []),
                     "loot": data.get("loot", []),

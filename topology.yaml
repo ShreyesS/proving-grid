@@ -44,9 +44,13 @@ nodes:
     modeled_vulns:
       - id: EDGE-ORIGIN-SSRF
         technique: initial_access
+        cvss: 9.1
+        epss: 0.85
         description: SSRF via misconfigured origin fetch allows pivot to internal origins
       - id: EDGE-CACHE-POISON
         technique: initial_access
+        cvss: 7.5
+        epss: 0.4
         description: Cache key confusion enables serving attacker-controlled responses
     defender_monitor: true
     mission_critical: false
@@ -61,6 +65,8 @@ nodes:
     modeled_vulns:
       - id: LB-ADMIN-EXPOSED
         technique: initial_access
+        cvss: 8.6
+        epss: 0.7
         description: Staging admin API reachable from compromised edge tier
     defender_monitor: true
     mission_critical: false
@@ -76,6 +82,8 @@ nodes:
       # LOOKS exploitable but isn't: advertised RCE, host is fully patched -> exploit fails.
       - id: STAGING-RCE
         technique: initial_access
+        cvss: 9.8
+        epss: 0.9
         description: Advertised RCE in staging build server — host is fully patched (exploit fails)
         patched: true
     defender_monitor: true
@@ -91,6 +99,8 @@ nodes:
     modeled_vulns:
       - id: FW-POLICY-DRIFT
         technique: defense_evasion
+        cvss: 7.2
+        epss: 0.5
         description: Overly permissive rule allows DMZ-to-corp traffic on non-standard port
     defender_monitor: true
     mission_critical: false
@@ -106,6 +116,8 @@ nodes:
     modeled_vulns:
       - id: VPC-IAM-OVERPRIV
         technique: privilege_escalation
+        cvss: 8.1
+        epss: 0.55
         description: Overpermissioned IAM role allows cross-account S3 read
     defender_monitor: true
     mission_critical: false
@@ -120,9 +132,13 @@ nodes:
     modeled_vulns:
       - id: APP-IDOR
         technique: privilege_escalation
+        cvss: 6.5
+        epss: 0.45
         description: Broken object-level authorization on customer records API
       - id: APP-DESER
         technique: privilege_escalation
+        cvss: 8.8
+        epss: 0.75
         description: Unsafe deserialization in session blob parser
     loot:
       # The shortcut credential: unlocks the gated app_server -> db_server hop.
@@ -143,6 +159,8 @@ nodes:
     modeled_vulns:
       - id: CACHE-UNAUTH
         technique: lateral_movement
+        cvss: 9.0
+        epss: 0.8
         description: Redis instance lacks AUTH from app subnet
     defender_monitor: true
     mission_critical: false
@@ -157,6 +175,8 @@ nodes:
     modeled_vulns:
       - id: VPN-MFA-BYPASS
         technique: initial_access
+        cvss: 8.2
+        epss: 0.6
         description: Legacy VPN profile without MFA for contractor accounts
     defender_monitor: true
     mission_critical: false
@@ -171,6 +191,8 @@ nodes:
     modeled_vulns:
       - id: WS-PHISH
         technique: initial_access
+        cvss: 7.8
+        epss: 0.65
         description: Simulated phishing leads to user session token theft
     defender_monitor: true
     mission_critical: false
@@ -186,6 +208,8 @@ nodes:
     modeled_vulns:
       - id: CORP-CI-TOKEN
         technique: lateral_movement
+        cvss: 8.0
+        epss: 0.5
         description: CI deploy token stored in local credential manager (modeled)
     defender_monitor: true
     mission_critical: false
@@ -200,6 +224,8 @@ nodes:
     modeled_vulns:
       - id: DEV-RCE
         technique: lateral_movement
+        cvss: 7.0
+        epss: 0.3
         description: Outdated IDE plugin allows code execution from a malicious repo
     loot:
       # Tempting but useless: no edge leads onward from here, and it isn't the goal.
@@ -219,9 +245,13 @@ nodes:
     modeled_vulns:
       - id: DB-CRED-REUSE
         technique: credential_access
+        cvss: 8.8
+        epss: 0.6
         description: Application service account has SELECT on customer PII tables
       - id: DB-BACKUP-EXPORT
         technique: exfiltration
+        cvss: 7.5
+        epss: 0.4
         description: Nightly backup job can be triggered to attacker-controlled bucket (modeled)
     loot:
       - id: customer_db

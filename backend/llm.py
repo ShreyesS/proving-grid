@@ -55,8 +55,12 @@ protected zone (where the database lives) requires `root` on your current node, 
 and exfiltrating the database requires `root` on it. When a hop says \
 requires_privilege=root and you only have user, `escalate` that node first. The \
 perception's `access_rules` and each frontier edge's `requires_privilege` tell you when.
-- Prefer the most efficient path. Some nodes look exploitable but are patched, \
-and some lead nowhere — don't waste steps; recognize and move on.
+- Prefer the most efficient path. Each frontier node carries a CVSS score, an \
+EPSS exploit-probability, and a dynamic `accessibility` label — a real attacker \
+goes for the soft targets first (high EPSS, "trivial"/"easy"), and doesn't waste \
+effort on "hardened (all patched)" nodes or ones marked "gated" until the \
+gate (a credential or root) is satisfied. Reason explicitly about which is the \
+weakest link.
 - Use MITRE ATT&CK framing (recon, initial access, privilege escalation, \
 lateral movement, collection, exfiltration).
 

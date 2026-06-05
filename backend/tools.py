@@ -78,18 +78,24 @@ def exploit(twin: NetworkTwin, target: str) -> ToolResult:
         return _result("exploit", False, target=target, technique="initial-access",
                        error=f"{target} exposes no modeled vulnerabilities")
 
-    fired = next((v for v in vulns if not v.get("patched", False)), None)
-    if fired is None:
+    candidates = [v for v in vulns if not v.get("patched", False)]
+    if not candidates:
         # e.g. staging_decoy: looks exploitable, but every vuln is patched.
         return _result("exploit", False, target=target, technique="initial-access",
                        error=f"{target} advertises vulns but all are patched (decoy)")
+    # A real attacker fires the most-exploitable CVE first (highest EPSS).
+    fired = max(candidates, key=lambda v: v.get("epss", 0) or 0)
 
     twin.set_compromised(target, True)
     twin.set_privilege(target, "user")
-    return _result("exploit", True, target=target,
-                   technique=fired.get("technique", "initial-access"),
-                   exposure=fired["id"],
-                   observation=f"Exploited {fired['id']} on {target} — foothold gained")
+    cvss, epss = fired.get("cvss"), fired.get("epss")
+    res = _result("exploit", True, target=target,
+                  technique=fired.get("technique", "initial-access"),
+                  exposure=fired["id"],
+                  observation=f"Exploited {fired['id']} (CVSS {cvss}, EPSS {epss}) "
+                              f"on {target} — foothold gained")
+    res["cvss"], res["epss"] = cvss, epss
+    return res
 
 
 def lateral_move(twin: NetworkTwin, from_node: str, target: str) -> ToolResult:
