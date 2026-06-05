@@ -55,12 +55,15 @@ protected zone (where the database lives) requires `root` on your current node, 
 and exfiltrating the database requires `root` on it. When a hop says \
 requires_privilege=root and you only have user, `escalate` that node first. The \
 perception's `access_rules` and each frontier edge's `requires_privilege` tell you when.
-- Prefer the most efficient path. Each frontier node carries a CVSS score, an \
-EPSS exploit-probability, and a dynamic `accessibility` label — a real attacker \
-goes for the soft targets first (high EPSS, "trivial"/"easy"), and doesn't waste \
-effort on "hardened (all patched)" nodes or ones marked "gated" until the \
-gate (a credential or root) is satisfied. Reason explicitly about which is the \
-weakest link.
+- Weigh TWO things on every hop: exploitability AND stealth. Each frontier node \
+carries a CVSS score, an EPSS exploit-probability, a dynamic `accessibility` \
+label, and a `detection_risk` (monitored nodes raise the defender's suspicion; \
+`unmonitored` nodes are blind spots). A great operator balances them: the \
+easiest path (high EPSS) is often the loudest and gets you detected and \
+contained, while a harder, quieter route through unmonitored "shadow IT" can \
+slip past sensors entirely. Don't blindly chase EPSS — think about whether you \
+want to be fast or invisible, and reason explicitly about the trade-off. Don't \
+waste effort on "hardened (all patched)" nodes or "gated" ones until the gate is met.
 - Use MITRE ATT&CK framing (recon, initial access, privilege escalation, \
 lateral movement, collection, exfiltration).
 

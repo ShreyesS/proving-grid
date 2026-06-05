@@ -73,6 +73,14 @@ def perceive(twin: NetworkTwin, last_result: Optional[ToolResult] = None) -> dic
                 accessibility = f"gated: needs root on {src}"
             else:
                 accessibility = prof["ease_label"]
+            monitored = bool(t.get("defender_monitor"))
+            # Detection risk = how loud this hop is. Unmonitored = a blind spot.
+            if not monitored:
+                detection_risk = "none (unmonitored — blind spot)"
+            elif twin.node_zone(tgt) in ("dmz", twin.protected_zone):
+                detection_risk = "high (monitored, deep zone)"
+            else:
+                detection_risk = "moderate (monitored)"
             frontier.append({
                 "from": src,
                 "to": tgt,
@@ -83,6 +91,8 @@ def perceive(twin: NetworkTwin, last_result: Optional[ToolResult] = None) -> dic
                 "cvss": prof["cvss"],
                 "epss": prof["epss"],
                 "accessibility": accessibility,   # dynamic: easy/moderate/hard or gated
+                "monitored": monitored,
+                "detection_risk": detection_risk,
                 "requires_cred": cred,
                 # Access level needed to make this hop: root to enter the protected zone.
                 "requires_privilege": "root" if needs_root else "user",

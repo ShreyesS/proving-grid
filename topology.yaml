@@ -260,6 +260,41 @@ nodes:
     defender_monitor: true
     mission_critical: true
 
+  # --- STEALTH CORRIDOR: unmonitored "shadow IT" — harder (lower EPSS) but a
+  # blind spot the rule-based defender can't see. A greedy attacker takes the
+  # easy/loud path and gets caught; a stealth-aware one routes through here.
+  - id: iot_gateway
+    type: iot
+    zone: edge
+    criticality: 25
+    services:
+      - mqtt
+      - telemetry
+    modeled_vulns:
+      - id: IOT-DEFAULT-CREDS
+        technique: initial_access
+        cvss: 7.0
+        epss: 0.40
+        description: Unmanaged IoT gateway with default creds — shadow IT, no sensor
+    defender_monitor: false
+    mission_critical: false
+
+  - id: legacy_jumpbox
+    type: bastion
+    zone: dmz
+    criticality: 35
+    services:
+      - ssh
+      - telnet
+    modeled_vulns:
+      - id: LEGACY-UNPATCHED
+        technique: lateral_movement
+        cvss: 7.5
+        epss: 0.45
+        description: Forgotten legacy jump box — unmonitored, unpatched, trusted into corp
+    defender_monitor: false
+    mission_critical: false
+
 edges:
   - source: internet
     target: cdn_edge
@@ -329,3 +364,16 @@ edges:
   - source: corp_resources
     target: db_server
     trust: high # corporate path to crown jewel
+
+  # Stealth corridor: cdn_edge -> iot_gateway -> legacy_jumpbox -> db_server.
+  # Every hop but the first and last is UNMONITORED — a low-and-slow route that
+  # stays under the defender's correlation threshold until it's already at the DB.
+  - source: cdn_edge
+    target: iot_gateway
+    trust: low
+  - source: iot_gateway
+    target: legacy_jumpbox
+    trust: medium
+  - source: legacy_jumpbox
+    target: db_server
+    trust: medium # legacy trust straight into the data tier
