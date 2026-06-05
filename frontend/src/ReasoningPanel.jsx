@@ -63,6 +63,45 @@ function Step({ s }) {
     );
   }
 
+  if (s.kind === "detection") {
+    return (
+      <div
+        style={{
+          margin: "8px 0",
+          padding: "8px 10px",
+          borderRadius: 6,
+          background: "rgba(239, 68, 68, 0.12)",
+          border: "1px solid rgba(239, 68, 68, 0.5)",
+          color: "#fecaca",
+          fontSize: "0.8rem",
+          lineHeight: 1.45,
+          fontWeight: 600,
+        }}
+      >
+        {s.text}
+      </div>
+    );
+  }
+
+  if (s.kind === "defense") {
+    return (
+      <div
+        style={{
+          margin: "8px 0",
+          padding: "8px 10px",
+          borderRadius: 6,
+          background: "rgba(56, 189, 248, 0.10)",
+          border: "1px solid rgba(56, 189, 248, 0.45)",
+          color: "#bae6fd",
+          fontSize: "0.8rem",
+          lineHeight: 1.45,
+        }}
+      >
+        {s.text}
+      </div>
+    );
+  }
+
   if (s.kind === "error") {
     return (
       <div style={{ color: "#fca5a5", fontSize: "0.8rem", margin: "6px 0" }}>

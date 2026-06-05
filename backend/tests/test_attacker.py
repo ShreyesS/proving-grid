@@ -65,3 +65,33 @@ def test_tool_error_does_not_crash_run():
     reasoning = [e for e in events if e["type"] == "reasoning"]
     assert reasoning and reasoning[0]["payload"]["ok"] is False
     assert outcome in ("blocked", "goal")
+
+
+# --- M3 defender: detect -> contain ----------------------------------------
+
+def test_undefended_run_still_breaches():
+    outcome, _events, twin = _run(scripted_path_a(), defended=False)
+    assert outcome == "goal" and twin.is_goal_reached()
+
+
+def test_defended_run_contains_the_attacker():
+    outcome, events, twin = _run(scripted_path_a(), defended=True)
+    assert outcome == "contained"
+    assert not twin.is_goal_reached()                 # DB never exfiltrated
+    # a correlated detection fired...
+    assert any(e["type"] == "reasoning" and e["payload"].get("kind") == "detection"
+               for e in events)
+    # ...and the attacker's spearhead was isolated, at a cost to integrity.
+    assert any(twin.is_isolated(n) for n in twin.graph.nodes)
+    assert 0 < twin.get_mission_integrity() < 100
+
+
+def test_lone_event_does_not_trip_detection():
+    from defender import Defender
+    from twin import load_twin
+    t = load_twin()
+    d = Defender(t, "internet")
+    # A single exploit is one technique below threshold — correlation needed.
+    det, _ = d.observe(
+        {"tool": "exploit", "target": "cdn_edge", "technique": "initial-access", "ok": True}, 1)
+    assert det is None and not d.alerted

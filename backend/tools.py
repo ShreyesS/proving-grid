@@ -78,18 +78,24 @@ def exploit(twin: NetworkTwin, target: str) -> ToolResult:
         return _result("exploit", False, target=target, technique="initial-access",
                        error=f"{target} exposes no modeled vulnerabilities")
 
-    fired = next((v for v in vulns if not v.get("patched", False)), None)
-    if fired is None:
+    candidates = [v for v in vulns if not v.get("patched", False)]
+    if not candidates:
         # e.g. staging_decoy: looks exploitable, but every vuln is patched.
         return _result("exploit", False, target=target, technique="initial-access",
                        error=f"{target} advertises vulns but all are patched (decoy)")
+    # A real attacker fires the most-exploitable CVE first (highest EPSS).
+    fired = max(candidates, key=lambda v: v.get("epss", 0) or 0)
 
     twin.set_compromised(target, True)
     twin.set_privilege(target, "user")
-    return _result("exploit", True, target=target,
-                   technique=fired.get("technique", "initial-access"),
-                   exposure=fired["id"],
-                   observation=f"Exploited {fired['id']} on {target} — foothold gained")
+    cvss, epss = fired.get("cvss"), fired.get("epss")
+    res = _result("exploit", True, target=target,
+                  technique=fired.get("technique", "initial-access"),
+                  exposure=fired["id"],
+                  observation=f"Exploited {fired['id']} (CVSS {cvss}, EPSS {epss}) "
+                              f"on {target} — foothold gained")
+    res["cvss"], res["epss"] = cvss, epss
+    return res
 
 
 def lateral_move(twin: NetworkTwin, from_node: str, target: str) -> ToolResult:
@@ -109,6 +115,11 @@ def lateral_move(twin: NetworkTwin, from_node: str, target: str) -> ToolResult:
     if not twin.has_cred(cred):
         return _result("lateral_move", False, target=target, technique="lateral-movement",
                        error=f"edge {from_node} -> {target} requires credential '{cred}' (not looted)")
+    # Access-level gate: crossing into the protected zone needs root on the source.
+    if twin.crossing_into_protected(from_node, target) and twin.get_privilege(from_node) != "root":
+        return _result("lateral_move", False, target=target, technique="lateral-movement",
+                       error=f"entering the {twin.protected_zone} zone requires root on "
+                             f"{from_node} — escalate there first")
 
     twin.set_compromised(target, True)
     if twin.get_privilege(target) == "none":
@@ -151,6 +162,10 @@ def exfiltrate(twin: NetworkTwin, node: str) -> ToolResult:
     if node not in twin.goal_nodes:
         return _result("exfiltrate", False, target=node, technique="exfiltration",
                        error=f"{node} is not a mission objective")
+    # Access-level gate: pulling the crown-jewel data requires root on it.
+    if twin.get_privilege(node) != "root":
+        return _result("exfiltrate", False, target=node, technique="exfiltration",
+                       error=f"exfiltration requires root on {node} — escalate first")
     twin.set_exfiltrated(node, True)
     data = ", ".join(i["id"] for i in twin.get_loot(node)) or "objective data"
     return _result("exfiltrate", True, target=node, technique="exfiltration",

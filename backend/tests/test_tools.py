@@ -51,9 +51,13 @@ def test_lateral_move_respects_credential_gate(twin):
     assert blocked["ok"] is False and "db_service_cred" in blocked["error"]
     assert not twin.is_compromised("db_server")
 
-    # Loot unlocks the shortcut.
+    # Loot unlocks the credential gate...
     tools.loot(twin, "app_server")
     assert "db_service_cred" in twin.looted
+    # ...but crossing into the corp zone still needs root (access-level gate).
+    still_blocked = tools.lateral_move(twin, "app_server", "db_server")
+    assert still_blocked["ok"] is False and "root" in still_blocked["error"]
+    tools.escalate(twin, "app_server")
     opened = tools.lateral_move(twin, "app_server", "db_server")
     assert opened["ok"] and twin.is_compromised("db_server")
 
@@ -67,7 +71,11 @@ def test_exfiltrate_only_goal_node(twin):
     tools.lateral_move(twin, "load_balancer", "firewall")
     tools.lateral_move(twin, "firewall", "app_server")
     tools.loot(twin, "app_server")
+    tools.escalate(twin, "app_server")          # root needed to cross into corp
     tools.lateral_move(twin, "app_server", "db_server")
+    # exfil needs root on the DB host — fails as user, succeeds after escalation.
+    assert tools.exfiltrate(twin, "db_server")["ok"] is False
+    tools.escalate(twin, "db_server")
     res = tools.exfiltrate(twin, "db_server")
     assert res["ok"] and twin.is_goal_reached()
 

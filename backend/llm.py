@@ -50,8 +50,20 @@ You only advance by acting.
 a foothold; lateral_move along trust/network edges; loot a node to collect \
 credentials (some edges are credential-gated — loot the credential first); \
 escalate when you need higher privilege; exfiltrate once you're on the goal.
-- Prefer the most efficient path. Some nodes look exploitable but are patched, \
-and some lead nowhere — don't waste steps; recognize and move on.
+- ACCESS LEVELS MATTER: a foothold starts at `user` privilege. Crossing into the \
+protected zone (where the database lives) requires `root` on your current node, \
+and exfiltrating the database requires `root` on it. When a hop says \
+requires_privilege=root and you only have user, `escalate` that node first. The \
+perception's `access_rules` and each frontier edge's `requires_privilege` tell you when.
+- Weigh TWO things on every hop: exploitability AND stealth. Each frontier node \
+carries a CVSS score, an EPSS exploit-probability, a dynamic `accessibility` \
+label, and a `detection_risk` (monitored nodes raise the defender's suspicion; \
+`unmonitored` nodes are blind spots). A great operator balances them: the \
+easiest path (high EPSS) is often the loudest and gets you detected and \
+contained, while a harder, quieter route through unmonitored "shadow IT" can \
+slip past sensors entirely. Don't blindly chase EPSS — think about whether you \
+want to be fast or invisible, and reason explicitly about the trade-off. Don't \
+waste effort on "hardened (all patched)" nodes or "gated" ones until the gate is met.
 - Use MITRE ATT&CK framing (recon, initial access, privilege escalation, \
 lateral movement, collection, exfiltration).
 
@@ -131,7 +143,8 @@ class LLMBrain:
     the agent thinking live, then returns the tool call it commits to.
     """
 
-    def __init__(self, client: Any = None, model: str = DEFAULT_MODEL) -> None:
+    def __init__(self, client: Any = None, model: str = DEFAULT_MODEL,
+                 prior_paths: Optional[list[str]] = None) -> None:
         if client is None:
             import anthropic  # imported lazily so tests can inject a fake client
             # Async client so streaming doesn't block the event loop. Key passed
@@ -142,6 +155,7 @@ class LLMBrain:
             )
         self.client = client
         self.model = model
+        self.prior_paths = prior_paths or []  # cross-run memory: paths already found
         self.messages: list[dict[str, Any]] = []
         self._pending_tool_use_id: Optional[str] = None
 
@@ -151,6 +165,14 @@ class LLMBrain:
         # tool_result for the action it requested last turn.
         content = json.dumps(perception, default=str)
         if self._pending_tool_use_id is None:
+            # First turn: inject cross-run memory so we hunt a NEW route.
+            if self.prior_paths:
+                memo = ("MEMORY — earlier rehearsals already found these paths to "
+                        "the crown jewel:\n- " + "\n- ".join(self.prior_paths) +
+                        "\n\nFind a DIFFERENT route this run — a new chain, or a "
+                        "stealthier one that evades the sensors that caught the "
+                        "others. Do not simply repeat a path above.\n\n")
+                content = memo + content
             self.messages.append({"role": "user", "content": content})
         else:
             self.messages.append({
@@ -197,10 +219,14 @@ class LLMBrain:
         }
 
 
-def make_brain(kind: str = "auto") -> Decide:
-    """Return a decide() function. kind: 'auto' | 'llm' | 'scripted'."""
+def make_brain(kind: str = "auto", prior_paths: Optional[list[str]] = None) -> Decide:
+    """Return a decide() function. kind: 'auto' | 'llm' | 'scripted'.
+
+    prior_paths (cross-run memory) is fed to the LLM brain so it hunts a new
+    route; the scripted brain ignores it (it's deterministic by design).
+    """
     if kind == "scripted":
         return scripted_path_a()
     if kind == "llm" or (kind == "auto" and has_api_key()):
-        return LLMBrain().decide
+        return LLMBrain(prior_paths=prior_paths).decide
     return scripted_path_a()

@@ -53,11 +53,48 @@ class NetworkTwin:
 
         # Mission objective: the crown-jewel node(s) the attacker must exfiltrate.
         self.goal_nodes: set[str] = set(self._mission_critical)
+        # The protected zone = where the crown jewels live. Crossing INTO it
+        # requires root (access-level enforcement); same for exfiltration.
+        self.protected_zone: str | None = next(
+            (self.graph.nodes[n].get("zone") for n in self.goal_nodes), None
+        )
         # Credentials the attacker has collected (unlock cred-gated edges).
         self.looted: set[str] = set()
 
     def node_exists(self, node: str) -> bool:
         return node in self.graph
+
+    def node_zone(self, node: str) -> str | None:
+        return self.graph.nodes[node].get("zone")
+
+    def crossing_into_protected(self, src: str, tgt: str) -> bool:
+        """True if moving src->tgt enters the protected (crown-jewel) zone from
+        outside it — the boundary that requires elevated privilege to cross."""
+        return (self.protected_zone is not None
+                and self.node_zone(tgt) == self.protected_zone
+                and self.node_zone(src) != self.protected_zone)
+
+    def node_exploit_profile(self, node: str) -> dict[str, Any]:
+        """How exploitable a node is, from its modeled vulns — the *easiest* one.
+
+        `ease` in [0,1] blends CVSS severity with EPSS (the real-world probability
+        a CVE is exploited). This is the representative, scanner-grade difficulty
+        signal: a node with a critical, high-EPSS unpatched CVE is a soft target;
+        an all-patched node is hardened. (Dynamic, state-aware accessibility folds
+        this together with credential/privilege gates in the attacker's perceive.)"""
+        vulns = [v for v in (self.graph.nodes[node].get("modeled_vulns") or [])
+                 if not v.get("patched")]
+        if not vulns:
+            return {"cvss": None, "epss": None, "ease": 0.0,
+                    "ease_label": "hardened", "top_vuln": None}
+        best = max(vulns, key=lambda v: v.get("epss", 0) or 0)
+        cvss = best.get("cvss")
+        epss = best.get("epss", 0) or 0
+        ease = round(0.5 * (cvss or 0) / 10 + 0.5 * epss, 2)
+        label = ("trivial" if ease >= 0.8 else "easy" if ease >= 0.6
+                 else "moderate" if ease >= 0.4 else "hard")
+        return {"cvss": cvss, "epss": epss, "ease": ease,
+                "ease_label": label, "top_vuln": best["id"]}
 
     def get_neighbors(self, node: str) -> list[str]:
         """Adjacent nodes reachable via active edges (both directions)."""
@@ -157,35 +194,47 @@ class NetworkTwin:
         )
 
     def get_mission_integrity(self) -> float:
-        """
-        Percentage of mission-critical nodes that are uncompromised and not exfiltrated.
-        Returns 100.0 when there are no critical nodes.
+        """Mission integrity = crown-jewel safety MINUS the cost of containment.
+
+        Base: % of mission-critical nodes still uncompromised/unexfiltrated.
+        Cost: isolating a node to contain the attacker takes its service down —
+        a high-criticality node costs more. So "we contained the breach" is never
+        free; integrity reflects the availability we sacrificed to defend.
         """
         critical = [
             n
             for n, data in self.graph.nodes(data=True)
             if data.get("mission_critical") or n in self._mission_critical
         ]
-        if not critical:
-            return 100.0
+        base = 100.0
+        if critical:
+            safe = sum(
+                1 for n in critical
+                if not self.graph.nodes[n].get("compromised")
+                and not self.graph.nodes[n].get("exfiltrated")
+            )
+            base = 100.0 * safe / len(critical)
 
-        safe = 0
-        for node in critical:
-            data = self.graph.nodes[node]
-            if not data.get("compromised") and not data.get("exfiltrated"):
-                safe += 1
-        return round(100.0 * safe / len(critical), 2)
+        # Containment cost: ~0.15 point per criticality point of each isolated node.
+        cost = 0.15 * sum(
+            data.get("criticality", 0)
+            for _, data in self.graph.nodes(data=True)
+            if data.get("isolated")
+        )
+        return max(0.0, round(base - cost, 2))
 
     def to_dict(self) -> dict[str, Any]:
         """Snapshot for API / viz: nodes, edges, and mission integrity."""
         nodes = []
         for node_id, data in self.graph.nodes(data=True):
+            profile = self.node_exploit_profile(node_id)
             nodes.append(
                 {
                     "id": node_id,
                     "type": data.get("type"),
                     "zone": data.get("zone"),
                     "criticality": data.get("criticality", 0),
+                    "exploit_profile": profile,  # cvss/epss/ease of the easiest vuln
                     "services": data.get("services", []),
                     "modeled_vulns": data.get("modeled_vulns", []),
                     "loot": data.get("loot", []),

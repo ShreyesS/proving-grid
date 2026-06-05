@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import Topology from "./Topology.jsx";
 import Scoreboard from "./Scoreboard.jsx";
 import ReasoningPanel from "./ReasoningPanel.jsx";
+import CoveragePanel from "./CoveragePanel.jsx";
 
 function wsUrl() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -21,7 +22,8 @@ function upsertDelta(prev, step, chunk) {
 
 // Finalize a step (after its tool ran) with technique / exposure / result.
 function upsertFinal(prev, p) {
-  if (p.kind === "finding" || p.kind === "error") {
+  // Standalone events (not tied to an attacker step) just append.
+  if (["finding", "error", "detection", "defense"].includes(p.kind)) {
     return [...prev, { ...p, streaming: false }];
   }
   const i = prev.findIndex((s) => s.step === p.step && s.kind === "step");
@@ -52,11 +54,30 @@ export default function App() {
   const [showEditor, setShowEditor] = useState(false);
   const [yamlText, setYamlText] = useState("");
   const [saveStatus, setSaveStatus] = useState(null); // null | "saving" | "saved" | "error"
+  const [coverage, setCoverage] = useState(null);
+  const [evalProgress, setEvalProgress] = useState(null);
 
-  function triggerRun() {
-    fetch("/run", { method: "POST" }).catch((err) =>
-      console.error("Failed to start run:", err)
+  function refreshCoverage() {
+    fetch("/memory").then((r) => r.json()).then(setCoverage).catch(() => {});
+  }
+
+  function triggerRun(defended) {
+    fetch(`/run?defended=${defended ? "true" : "false"}`, { method: "POST" }).catch(
+      (err) => console.error("Failed to start run:", err)
     );
+  }
+
+  function runEval() {
+    setEvalProgress({ run: 0, of: 5 });
+    fetch("/eval?n=5&defended=true", { method: "POST" })
+      .then((r) => r.json())
+      .then((stats) => setCoverage(stats))
+      .catch((err) => console.error("Eval failed:", err))
+      .finally(() => setEvalProgress(null));
+  }
+
+  function clearMemory() {
+    fetch("/memory/clear", { method: "POST" }).then(refreshCoverage).catch(() => {});
   }
 
   function reloadTopology() {
@@ -102,6 +123,16 @@ export default function App() {
     }
     if (msg.type === "run_end") {
       setRunning(false);
+      refreshCoverage();
+    }
+    if (msg.type === "eval_start") setEvalProgress({ run: 0, of: msg.payload?.n });
+    if (msg.type === "eval_progress" && msg.payload) {
+      setEvalProgress({ run: msg.payload.run, of: msg.payload.of });
+      if (msg.payload.stats) setCoverage(msg.payload.stats);
+    }
+    if (msg.type === "eval_done") {
+      setEvalProgress(null);
+      if (msg.payload) setCoverage(msg.payload);
     }
     if (msg.type === "state" && msg.payload) {
       setSnapshot(msg.payload);
@@ -131,6 +162,7 @@ export default function App() {
           "Cannot reach the API. Start the backend first (see README), then refresh."
         );
       });
+    refreshCoverage();
   }, []);
 
   useEffect(() => {
@@ -157,23 +189,45 @@ export default function App() {
       <header className="app-header">
         <h1>Proving Grid — Network Twin</h1>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button
-            onClick={triggerRun}
-            disabled={running || wsStatus !== "connected"}
-            style={{
-              padding: "6px 16px",
-              background: running ? "#374151" : "#dc2626",
-              color: running ? "#9ca3af" : "#fff",
-              border: "none",
-              borderRadius: 6,
-              fontWeight: 600,
-              fontSize: "0.85rem",
-              cursor: running ? "not-allowed" : "pointer",
+          {(() => {
+            const busy = running || !!evalProgress || wsStatus !== "connected";
+            const solid = (bg) => ({
+              padding: "6px 14px",
+              background: busy ? "#374151" : bg,
+              color: busy ? "#9ca3af" : "#fff",
+              border: "none", borderRadius: 6, fontWeight: 600,
+              fontSize: "0.82rem", cursor: busy ? "not-allowed" : "pointer",
               letterSpacing: "0.03em",
-            }}
-          >
-            {running ? "Running…" : "Run Attack"}
-          </button>
+            });
+            return (
+              <>
+                <button onClick={() => triggerRun(false)} disabled={busy}
+                  title="Attacker only — no defense" style={solid("#dc2626")}>
+                  {running ? "Running…" : "Run ▸ Undefended"}
+                </button>
+                <button onClick={() => triggerRun(true)} disabled={busy}
+                  title="Attacker vs defender" style={solid("#2563eb")}>
+                  Run ▸ Defended
+                </button>
+                <button onClick={runEval} disabled={busy}
+                  title="Run N rehearsals and report agent performance"
+                  style={solid("#7c3aed")}>
+                  {evalProgress ? `Eval ${evalProgress.run}/${evalProgress.of}…` : "Eval ×5"}
+                </button>
+                <button onClick={clearMemory} disabled={busy}
+                  title="Reset the agent's cross-run memory"
+                  style={{
+                    padding: "6px 12px", background: "transparent",
+                    color: busy ? "#4b5563" : "#8b9cb3", border: "1px solid",
+                    borderColor: busy ? "#4b5563" : "#8b9cb3", borderRadius: 6,
+                    fontWeight: 600, fontSize: "0.82rem",
+                    cursor: busy ? "not-allowed" : "pointer", letterSpacing: "0.03em",
+                  }}>
+                  Clear Memory
+                </button>
+              </>
+            );
+          })()}
           <button
             onClick={reloadTopology}
             disabled={running}
@@ -247,6 +301,7 @@ cd frontend && npm install && npm run dev
       </main>
       <aside className="app-sidebar">
         <Scoreboard snapshot={snapshot} />
+        <CoveragePanel coverage={coverage} evalProgress={evalProgress} />
         <ReasoningPanel steps={reasoningSteps} />
       </aside>
 

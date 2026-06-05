@@ -18,6 +18,7 @@ import yaml as _yaml
 
 from attacker import run_attack
 from llm import make_brain
+from memory import MEMORY
 from twin import DEFAULT_TOPOLOGY_PATH, load_twin
 
 app = FastAPI(title="Proving Grid")
@@ -81,10 +82,12 @@ def get_state() -> dict:
 
 
 @app.post("/run")
-async def run(brain: str = "auto"):
+async def run(brain: str = "auto", defended: bool = False, use_memory: bool = True):
     """Trigger a bounded attack rehearsal; events stream to all /ws clients.
 
     brain: 'auto' (LLM if ANTHROPIC_API_KEY is set, else scripted) | 'llm' | 'scripted'.
+    defended: if true, a defender detects + contains the attacker (the A/B duel).
+    use_memory: feed prior discovered paths so the agent hunts a NEW route.
     """
     global _run_in_progress
     if _run_in_progress:
@@ -94,15 +97,64 @@ async def run(brain: str = "auto"):
     _run_in_progress = True
     try:
         twin = load_twin()
-        decide = make_brain(brain)
+        # Cross-run memory: feed prior paths so the agent hunts a new route.
+        prior = MEMORY.path_summaries() if use_memory else None
+        decide = make_brain(brain, prior_paths=prior)
 
         async def emit(message: dict) -> None:
             await manager.broadcast(message)
 
-        outcome = await run_attack(twin, decide, emit)
-        return {"outcome": outcome, "brain": brain}
+        outcome = await run_attack(twin, decide, emit, defended=defended,
+                                   memory=MEMORY)
+        return {"outcome": outcome, "brain": brain, "defended": defended,
+                "memory_paths": MEMORY.stats()["distinct_paths"]}
     finally:
         _run_in_progress = False
+
+
+@app.post("/eval")
+async def run_eval(n: int = 5, defended: bool = True, brain: str = "auto"):
+    """Run N rehearsals headless (memory on, so each hunts a new path), then
+    report aggregate agent-performance stats. Streams eval_progress to /ws."""
+    global _run_in_progress
+    if _run_in_progress:
+        return JSONResponse(status_code=409,
+                            content={"error": "a run is already in progress"})
+    n = max(1, min(n, 25))
+    _run_in_progress = True
+
+    async def emit(message: dict) -> None:  # only progress, not per-step noise
+        await manager.broadcast(message)
+
+    async def noop(_message: dict) -> None:
+        return None
+
+    try:
+        await emit({"type": "eval_start", "payload": {"n": n}})
+        for i in range(n):
+            twin = load_twin()
+            decide = make_brain(brain, prior_paths=MEMORY.path_summaries())
+            outcome = await run_attack(twin, decide, noop, defended=defended,
+                                       memory=MEMORY, step_delay=0)
+            await emit({"type": "eval_progress",
+                        "payload": {"run": i + 1, "of": n, "outcome": outcome,
+                                    "stats": MEMORY.stats()}})
+        stats = MEMORY.stats()
+        await emit({"type": "eval_done", "payload": stats})
+        return stats
+    finally:
+        _run_in_progress = False
+
+
+@app.get("/memory")
+def get_memory() -> dict:
+    return MEMORY.stats()
+
+
+@app.post("/memory/clear")
+def clear_memory() -> dict:
+    MEMORY.clear()
+    return {"cleared": True}
 
 
 @app.websocket("/ws")

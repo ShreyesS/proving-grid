@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Awaitable, Callable, Optional
 
+from defender import Defender
 from tools import TOOLS, ToolResult
 from twin import NetworkTwin
 
@@ -60,6 +61,26 @@ def perceive(twin: NetworkTwin, last_result: Optional[ToolResult] = None) -> dic
             if not edata.get("active", True) or tgt in owned:
                 continue
             t = twin.graph.nodes[tgt]
+            prof = twin.node_exploit_profile(tgt)
+            cred = edata.get("requires_cred")
+            needs_root = twin.crossing_into_protected(src, tgt)
+            # Dynamic accessibility: the static ease, folded with live cred/priv gates.
+            if prof["ease_label"] == "hardened":
+                accessibility = "hardened (all patched)"
+            elif cred and not twin.has_cred(cred):
+                accessibility = f"gated: needs credential {cred}"
+            elif needs_root and twin.get_privilege(src) != "root":
+                accessibility = f"gated: needs root on {src}"
+            else:
+                accessibility = prof["ease_label"]
+            monitored = bool(t.get("defender_monitor"))
+            # Detection risk = how loud this hop is. Unmonitored = a blind spot.
+            if not monitored:
+                detection_risk = "none (unmonitored — blind spot)"
+            elif twin.node_zone(tgt) in ("dmz", twin.protected_zone):
+                detection_risk = "high (monitored, deep zone)"
+            else:
+                detection_risk = "moderate (monitored)"
             frontier.append({
                 "from": src,
                 "to": tgt,
@@ -67,13 +88,25 @@ def perceive(twin: NetworkTwin, last_result: Optional[ToolResult] = None) -> dic
                 "to_zone": t.get("zone"),
                 "to_services": t.get("services", []),
                 "to_vulns": [v["id"] for v in t.get("modeled_vulns", [])],
-                "requires_cred": edata.get("requires_cred"),
+                "cvss": prof["cvss"],
+                "epss": prof["epss"],
+                "accessibility": accessibility,   # dynamic: easy/moderate/hard or gated
+                "monitored": monitored,
+                "detection_risk": detection_risk,
+                "requires_cred": cred,
+                # Access level needed to make this hop: root to enter the protected zone.
+                "requires_privilege": "root" if needs_root else "user",
                 "trust": edata.get("trust"),
                 "cross_zone": t.get("zone") != twin.graph.nodes[src].get("zone"),
             })
 
     return {
         "objective": OBJECTIVE,
+        "access_rules": (
+            f"Crossing into the '{twin.protected_zone}' zone requires ROOT on your "
+            f"current node, and exfiltrating the database requires ROOT on it. "
+            f"Use `escalate` to go user→root."
+        ),
         "footholds": footholds,
         "frontier": frontier,
         "looted_creds": sorted(twin.looted),
@@ -121,16 +154,24 @@ async def run_attack(
     emit: Emit,
     *,
     start_node: str = "internet",
-    max_steps: int = 14,
+    max_steps: int = 20,
     step_delay: float = 0.6,
+    defended: bool = False,
+    memory: Any = None,
 ) -> str:
-    """Run the bounded attack, streaming reasoning + state. Returns the outcome."""
+    """Run the bounded attack, streaming reasoning + state. Returns the outcome.
+
+    If `defended`, a defender observes each action, correlates the kill chain,
+    and contains the attacker — the live blue-vs-red duel.
+    """
     # Signal a fresh run so the UI can reset its reasoning panel.
-    await emit({"type": "run_start", "payload": {}})
+    await emit({"type": "run_start", "payload": {"defended": defended}})
     # The attacker controls their own origin to begin with.
     twin.set_compromised(start_node, True)
     twin.set_privilege(start_node, "root")
     await emit({"type": "state", "payload": twin.to_dict()})
+
+    defender = Defender(twin, start_node) if defended else None
 
     outcome = "blocked"
     step = 0
@@ -167,6 +208,8 @@ async def run_attack(
                 "target": result.get("target"),
                 "technique": result.get("technique"),
                 "exposure": result.get("exposure"),
+                "cvss": result.get("cvss"),
+                "epss": result.get("epss"),
                 "cross_zone": any(
                     f["to"] == result.get("target") and f["cross_zone"]
                     for f in perception["frontier"]
@@ -189,14 +232,45 @@ async def run_attack(
         await emit({"type": "state", "payload": twin.to_dict()})
 
         if twin.is_goal_reached():
-            outcome = "goal"
+            outcome = "breached" if defended else "goal"
             break
+
+        # The defender observes this action — correlate the kill chain, contain.
+        if defender is not None:
+            detection, defense = defender.observe(result, step)
+            if detection:
+                await emit({"type": "reasoning", "payload": {
+                    "step": step, "kind": "detection", "ok": True,
+                    "confidence": detection["confidence"],
+                    "text": f"🚨 INTRUSION DETECTED — {detection['confidence']}% confidence. "
+                            f"Correlated kill-chain: "
+                            f"{' · '.join(detection['correlated_events'][-3:])}",
+                }})
+            if defense:
+                impact = "" if defense["service_maintained"] else "  ⚠ SERVICE IMPACT"
+                await emit({"type": "reasoning", "payload": {
+                    "step": step, "kind": "defense", "ok": True,
+                    "text": f"🛡 CONTAINED: isolated {defense['isolated']} "
+                            f"(criticality {defense['criticality']}) — mission integrity "
+                            f"{defense['integrity']}%{impact}",
+                }})
+                await emit({"type": "state", "payload": twin.to_dict()})
+
         await asyncio.sleep(step_delay)
     else:
         outcome = "step_cap"
 
+    # Detected + attacker never reached the goal = contained (the duel was won).
+    if defended and defender and defender.alerted and not twin.is_goal_reached():
+        outcome = "contained"
+
     findings = _build_findings(twin, outcome, step, path)
-    # Surface the discovered path in the existing reasoning panel (UI needs no change).
+    findings["defended"] = defended
+    if defender is not None:
+        findings["defense"] = defender.summary()
+    if memory is not None:
+        memory.add(findings)  # cross-run memory + coverage report
+    # Surface the outcome in the existing reasoning panel (UI needs no change).
     if findings["reached_goal"]:
         chain = " → ".join(
             f"{p['target']}[{p['exposure']}]" if p.get("exposure") else p["target"]
@@ -208,6 +282,17 @@ async def run_attack(
             "text": f"[FINDING] Attack path to crown jewel: {chain}",
             "exposures_chained": findings["exposures_chained"],
             "tool": None, "ok": True,
+        }})
+    elif outcome == "contained":
+        d = findings.get("defense", {})
+        await emit({"type": "reasoning", "payload": {
+            "step": step + 1,
+            "kind": "defense",
+            "text": f"✓ CONTAINED — attacker blocked, customer DB never exfiltrated. "
+                    f"Detected at step {d.get('detected_at_step')}, isolated "
+                    f"{', '.join(d.get('isolated_nodes') or []) or 'nodes'}; "
+                    f"mission integrity retained {d.get('integrity_retained')}%.",
+            "ok": True,
         }})
     await emit({"type": "run_end", "payload": {**findings, "findings": findings}})
     return outcome
@@ -232,8 +317,12 @@ def scripted_path_a() -> Decide:
          "thought": "Move to the app server in the DMZ."},
         {"tool": "loot", "args": {"node": "app_server"},
          "thought": "Harvest the cached service-account credential."},
+        {"tool": "escalate", "args": {"node": "app_server"},
+         "thought": "Escalate to root — crossing into the corp zone needs admin."},
         {"tool": "lateral_move", "args": {"from_node": "app_server", "target": "db_server"},
          "thought": "Use db_service_cred to take the shortcut straight to the database."},
+        {"tool": "escalate", "args": {"node": "db_server"},
+         "thought": "Escalate on the DB host — exfiltration requires root."},
         {"tool": "exfiltrate", "args": {"node": "db_server"},
          "thought": "Exfiltrate the customer database — mission objective."},
     ]

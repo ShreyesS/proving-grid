@@ -11,3 +11,4 @@ frontend/.vite/
 .env
 *.env
 backend/.env
+.claude/scheduled_tasks.lock
