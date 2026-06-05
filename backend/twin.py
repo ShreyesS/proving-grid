@@ -53,11 +53,26 @@ class NetworkTwin:
 
         # Mission objective: the crown-jewel node(s) the attacker must exfiltrate.
         self.goal_nodes: set[str] = set(self._mission_critical)
+        # The protected zone = where the crown jewels live. Crossing INTO it
+        # requires root (access-level enforcement); same for exfiltration.
+        self.protected_zone: str | None = next(
+            (self.graph.nodes[n].get("zone") for n in self.goal_nodes), None
+        )
         # Credentials the attacker has collected (unlock cred-gated edges).
         self.looted: set[str] = set()
 
     def node_exists(self, node: str) -> bool:
         return node in self.graph
+
+    def node_zone(self, node: str) -> str | None:
+        return self.graph.nodes[node].get("zone")
+
+    def crossing_into_protected(self, src: str, tgt: str) -> bool:
+        """True if moving src->tgt enters the protected (crown-jewel) zone from
+        outside it — the boundary that requires elevated privilege to cross."""
+        return (self.protected_zone is not None
+                and self.node_zone(tgt) == self.protected_zone
+                and self.node_zone(src) != self.protected_zone)
 
     def get_neighbors(self, node: str) -> list[str]:
         """Adjacent nodes reachable via active edges (both directions)."""

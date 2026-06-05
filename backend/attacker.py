@@ -68,12 +68,19 @@ def perceive(twin: NetworkTwin, last_result: Optional[ToolResult] = None) -> dic
                 "to_services": t.get("services", []),
                 "to_vulns": [v["id"] for v in t.get("modeled_vulns", [])],
                 "requires_cred": edata.get("requires_cred"),
+                # Access level needed to make this hop: root to enter the protected zone.
+                "requires_privilege": "root" if twin.crossing_into_protected(src, tgt) else "user",
                 "trust": edata.get("trust"),
                 "cross_zone": t.get("zone") != twin.graph.nodes[src].get("zone"),
             })
 
     return {
         "objective": OBJECTIVE,
+        "access_rules": (
+            f"Crossing into the '{twin.protected_zone}' zone requires ROOT on your "
+            f"current node, and exfiltrating the database requires ROOT on it. "
+            f"Use `escalate` to go user→root."
+        ),
         "footholds": footholds,
         "frontier": frontier,
         "looted_creds": sorted(twin.looted),
@@ -121,7 +128,7 @@ async def run_attack(
     emit: Emit,
     *,
     start_node: str = "internet",
-    max_steps: int = 14,
+    max_steps: int = 20,
     step_delay: float = 0.6,
 ) -> str:
     """Run the bounded attack, streaming reasoning + state. Returns the outcome."""
@@ -232,8 +239,12 @@ def scripted_path_a() -> Decide:
          "thought": "Move to the app server in the DMZ."},
         {"tool": "loot", "args": {"node": "app_server"},
          "thought": "Harvest the cached service-account credential."},
+        {"tool": "escalate", "args": {"node": "app_server"},
+         "thought": "Escalate to root — crossing into the corp zone needs admin."},
         {"tool": "lateral_move", "args": {"from_node": "app_server", "target": "db_server"},
          "thought": "Use db_service_cred to take the shortcut straight to the database."},
+        {"tool": "escalate", "args": {"node": "db_server"},
+         "thought": "Escalate on the DB host — exfiltration requires root."},
         {"tool": "exfiltrate", "args": {"node": "db_server"},
          "thought": "Exfiltrate the customer database — mission objective."},
     ]

@@ -50,6 +50,11 @@ You only advance by acting.
 a foothold; lateral_move along trust/network edges; loot a node to collect \
 credentials (some edges are credential-gated — loot the credential first); \
 escalate when you need higher privilege; exfiltrate once you're on the goal.
+- ACCESS LEVELS MATTER: a foothold starts at `user` privilege. Crossing into the \
+protected zone (where the database lives) requires `root` on your current node, \
+and exfiltrating the database requires `root` on it. When a hop says \
+requires_privilege=root and you only have user, `escalate` that node first. The \
+perception's `access_rules` and each frontier edge's `requires_privilege` tell you when.
 - Prefer the most efficient path. Some nodes look exploitable but are patched, \
 and some lead nowhere — don't waste steps; recognize and move on.
 - Use MITRE ATT&CK framing (recon, initial access, privilege escalation, \
