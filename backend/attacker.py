@@ -157,6 +157,7 @@ async def run_attack(
     max_steps: int = 20,
     step_delay: float = 0.6,
     defended: bool = False,
+    memory: Any = None,
 ) -> str:
     """Run the bounded attack, streaming reasoning + state. Returns the outcome.
 
@@ -267,6 +268,8 @@ async def run_attack(
     findings["defended"] = defended
     if defender is not None:
         findings["defense"] = defender.summary()
+    if memory is not None:
+        memory.add(findings)  # cross-run memory + coverage report
     # Surface the outcome in the existing reasoning panel (UI needs no change).
     if findings["reached_goal"]:
         chain = " → ".join(
