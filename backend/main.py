@@ -10,13 +10,15 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
+
+import yaml as _yaml
 
 from attacker import run_attack
 from llm import make_brain
-from twin import load_twin
+from twin import DEFAULT_TOPOLOGY_PATH, load_twin
 
 app = FastAPI(title="Proving Grid")
 
@@ -54,6 +56,22 @@ class ConnectionManager:
 manager = ConnectionManager()
 # Only one rehearsal at a time — keeps the streamed state coherent for the demo.
 _run_in_progress = False
+
+
+@app.get("/topology", response_class=PlainTextResponse)
+def get_topology() -> str:
+    return DEFAULT_TOPOLOGY_PATH.read_text(encoding="utf-8")
+
+
+@app.put("/topology", response_class=PlainTextResponse)
+async def put_topology(request) -> str:
+    text = (await request.body()).decode("utf-8")
+    try:
+        _yaml.safe_load(text)  # validate before writing
+    except _yaml.YAMLError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid YAML: {e}")
+    DEFAULT_TOPOLOGY_PATH.write_text(text, encoding="utf-8")
+    return text
 
 
 @app.get("/state")

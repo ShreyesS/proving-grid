@@ -49,6 +49,9 @@ export default function App() {
   const [wsStatus, setWsStatus] = useState("connecting");
   const [loadError, setLoadError] = useState(null);
   const [running, setRunning] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
+  const [yamlText, setYamlText] = useState("");
+  const [saveStatus, setSaveStatus] = useState(null); // null | "saving" | "saved" | "error"
 
   function triggerRun() {
     fetch("/run", { method: "POST" }).catch((err) =>
@@ -64,6 +67,32 @@ export default function App() {
         setReasoningSteps([]);
       })
       .catch((err) => console.error("Failed to reload topology:", err));
+  }
+
+  function openEditor() {
+    fetch("/topology")
+      .then((r) => r.text())
+      .then((text) => {
+        setYamlText(text);
+        setSaveStatus(null);
+        setShowEditor(true);
+      })
+      .catch((err) => console.error("Failed to load topology:", err));
+  }
+
+  function saveTopology() {
+    setSaveStatus("saving");
+    fetch("/topology", { method: "PUT", body: yamlText })
+      .then((r) => {
+        if (!r.ok) return r.text().then((t) => { throw new Error(t); });
+        setSaveStatus("saved");
+        setShowEditor(false);
+        reloadTopology();
+      })
+      .catch((err) => {
+        console.error("Failed to save topology:", err);
+        setSaveStatus("error");
+      });
   }
 
   const applyMessage = useCallback((msg) => {
@@ -163,6 +192,24 @@ export default function App() {
           >
             Reset
           </button>
+          <button
+            onClick={openEditor}
+            disabled={running}
+            style={{
+              padding: "6px 16px",
+              background: "transparent",
+              color: running ? "#4b5563" : "#8b9cb3",
+              border: "1px solid",
+              borderColor: running ? "#4b5563" : "#8b9cb3",
+              borderRadius: 6,
+              fontWeight: 600,
+              fontSize: "0.85rem",
+              cursor: running ? "not-allowed" : "pointer",
+              letterSpacing: "0.03em",
+            }}
+          >
+            Patch Network
+          </button>
           <span style={{ fontSize: "0.75rem", color: "#8b9cb3" }}>
             WebSocket: {wsStatus}
           </span>
@@ -202,6 +249,49 @@ cd frontend && npm install && npm run dev
         <Scoreboard snapshot={snapshot} />
         <ReasoningPanel steps={reasoningSteps} />
       </aside>
+
+      {showEditor && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 100,
+        }}>
+          <div style={{
+            background: "#1a2332", border: "1px solid #2a3544", borderRadius: 8,
+            width: "min(860px, 90vw)", height: "80vh",
+            display: "flex", flexDirection: "column", padding: 16, gap: 10,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>Patch Corporate Network — topology.yaml</span>
+              <button onClick={() => setShowEditor(false)}
+                style={{ background: "none", border: "none", color: "#8b9cb3", fontSize: "1.2rem", cursor: "pointer" }}>✕</button>
+            </div>
+            <textarea
+              value={yamlText}
+              onChange={(e) => { setYamlText(e.target.value); setSaveStatus(null); }}
+              spellCheck={false}
+              style={{
+                flex: 1, background: "#0f1419", color: "#e7ecf3", border: "1px solid #2a3544",
+                borderRadius: 6, padding: 12, fontFamily: "monospace", fontSize: "0.8rem",
+                lineHeight: 1.6, resize: "none", outline: "none",
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={saveTopology} disabled={saveStatus === "saving"}
+                style={{
+                  padding: "6px 20px", background: saveStatus === "saving" ? "#374151" : "#2563eb",
+                  color: "#fff", border: "none", borderRadius: 6, fontWeight: 600,
+                  fontSize: "0.85rem", cursor: saveStatus === "saving" ? "not-allowed" : "pointer",
+                }}>
+                {saveStatus === "saving" ? "Saving…" : "Save & Apply"}
+              </button>
+              {saveStatus === "error" && (
+                <span style={{ color: "#fca5a5", fontSize: "0.8rem" }}>Invalid YAML — check syntax</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
